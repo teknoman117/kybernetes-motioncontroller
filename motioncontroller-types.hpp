@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
 #ifndef MOTIONCONTROLLER_TYPES_H
 #define MOTIONCONTROLLER_TYPES_H
 
@@ -67,8 +71,8 @@ struct StatusPacket {
   static constexpr size_t ReceiveTransportSize = 8 + sizeof(PIDFrame);
 
   // System state
-  MotionControllerState state;
   KillSwitchStatusPacket remote;
+  MotionControllerState state;
   uint8_t batteryLow;
   uint8_t align1;
 

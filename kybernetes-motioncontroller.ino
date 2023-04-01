@@ -1,8 +1,6 @@
-/*
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at https://mozilla.org/MPL/2.0/.
- */
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 #define ENCODER_OPTIMIZE_INTERRUPTS
 #define ENCODER_USE_INTERRUPTS
@@ -31,9 +29,9 @@ constexpr float defaultKi = 0.25f;
 constexpr float defaultKd = 0.01f;
 
 namespace {
-  template <typename T> bool getStructFromWire(uint8_t address, T& obj) {
-    auto length = Wire.requestFrom(address, sizeof(T));
-    if (length != sizeof(T)) {
+  template <typename T> bool getStructFromWireCRC8(uint8_t address, T& obj) {
+    auto length = Wire.requestFrom(address, sizeof(T) + 1);
+    if (length != sizeof(T) + 1) {
       // drop buffer contents on error
       while (Wire.available()) {
         Wire.read();
@@ -44,7 +42,9 @@ namespace {
     for (int i = 0; i < sizeof(T); i++) {
       reinterpret_cast<uint8_t*>(&obj)[i] = Wire.read();
     }
-    return true;
+
+    uint8_t checksum = Wire.read();
+    return checksum == calculateCRC8(0, reinterpret_cast<uint8_t*>(&obj), sizeof(T));
   }
 
   template <typename T> void sendPacket(T& packet) {
@@ -97,8 +97,8 @@ ConfigurationPacket configuration = {
 };
 
 StatusPacket status = {
-  .state = MotionControllerState::Disabled,
   .remote = {0},
+  .state = MotionControllerState::Disabled,
   .batteryLow = 0,
   .align1 = 0,
   .motion = PIDFrame()
@@ -144,6 +144,9 @@ void controllerUpdate(unsigned long now) {
     return;
   }
 
+  // Next update in 20 ms (from start)
+  controllerNextUpdate += 20UL;
+
   // Update PID controller
   status.motion.nextInput(encoder.readAndReset());
   pid.compute(status.motion);
@@ -175,7 +178,9 @@ void controllerUpdate(unsigned long now) {
 
   // Check if any transitions need to happen
   KillSwitchStatusPacket packet;
-  getStructFromWire(killSwitchAddress, packet);
+  if (!getStructFromWireCRC8(killSwitchAddress, packet)) {
+    return;
+  }
 
   // TODO: use these to detect state transitions rather than just react to the immedate state
   // e.g. allow for top level state machine "these actions cause transitions" rather than this
@@ -211,9 +216,6 @@ void controllerUpdate(unsigned long now) {
   status.remote = packet;
   status.batteryLow = digitalRead(batteryLowPin) ? 0 : 1;
   sendPacket(status);
-
-  // Next update in 20 ms (from start)
-  controllerNextUpdate = now + 20UL;
 }
 
 void handlePacketConfigurationGet() {
@@ -493,7 +495,6 @@ void handlePacketSync() {
 }
 
 void loop() {
-  // Update controller
   auto now = millis();
   controllerUpdate(now);
 
@@ -525,10 +526,18 @@ void loop() {
       break;
     
     case PacketType::SendArm:
+      if (controllerNextUpdate - now < 2) {
+        // prevent us from missing the next status update
+        break;
+      }
       handlePacketSendArm();
       break;
     
     case PacketType::SendKeepalive:
+      if (controllerNextUpdate - now < 2) {
+        // prevent us from missing the next status update
+        break;
+      }
       handlePacketSendKeepalive();
       break;
     
@@ -551,9 +560,9 @@ void setup() {
   // 1 Mbps UART
   Serial.begin(1000000UL);
 
-  // Configure I2C for "Fast Mode Plus"
+  // Configure I2C
   Wire.begin();
-  Wire.setClock(1000000UL);
+  Wire.setClock(250000UL);
   Wire.setWireTimeout(1000UL);
 
   pinMode(encoderChannelAPin, INPUT);
