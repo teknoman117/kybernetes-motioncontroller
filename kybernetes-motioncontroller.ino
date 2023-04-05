@@ -9,6 +9,8 @@
 #include <Servo.h>
 #include <Wire.h>
 
+#include <PinChangeInterrupt.h>
+
 #include "crc8.hpp"
 #include "killswitch-types.hpp"
 #include "motioncontroller-types.hpp"
@@ -100,7 +102,7 @@ StatusPacket status = {
   .remote = {0},
   .state = MotionControllerState::Disabled,
   .batteryLow = 0,
-  .align1 = 0,
+  .bumperPressed = 0,
   .motion = PIDFrame()
 };
 
@@ -109,6 +111,12 @@ MotionControllerState localState = MotionControllerState::Disabled;
 KillSwitchState remoteState = KillSwitchState::Disarmed;
 
 unsigned long controllerNextUpdate = 0;
+
+volatile bool bumperContacted = false;
+
+void bumperContact() {
+  bumperContacted = true;
+}
 
 void setSteering(int16_t value) {
   if (value > 0) {
@@ -152,7 +160,8 @@ void controllerUpdate(unsigned long now) {
   pid.compute(status.motion);
 
   if (localState == MotionControllerState::MovingForwardPWM
-      || localState == MotionControllerState::MovingForwardPID) {
+      || localState == MotionControllerState::MovingForwardPID
+      || localState == MotionControllerState::CrawlingForward) {
     if (status.motion.Output >= 0) {
       servoThrottleOutput = status.motion.Output;
     }
@@ -163,11 +172,22 @@ void controllerUpdate(unsigned long now) {
     }
   }
 
+  // If we're in CrawlingForward and the bumper has been pressed, transition to stopped
+  uint8_t bumperPressed = digitalRead(bumperAPin) | digitalRead(bumperBPin) | bumperContacted;
+  if (localState == MotionControllerState::CrawlingForward
+      && bumperPressed) {
+    localState = MotionControllerState::Stopped;
+    servoThrottleOutput = 0;
+    status.motion.reset();
+  }
+  bumperContacted = false;
+
   // Transition to Stopped (from Moving*) if we have stopped moving and had intended to do so
   if (localState == MotionControllerState::MovingForwardPID
       || localState == MotionControllerState::MovingBackwardPID
       || localState == MotionControllerState::MovingForwardPWM
-      || localState == MotionControllerState::MovingBackwardPWM) {
+      || localState == MotionControllerState::MovingBackwardPWM
+      || localState == MotionControllerState::CrawlingForward) {
     if (status.motion.Input[0] == 0 && status.motion.Target == 0) {
       localState = MotionControllerState::Stopped;
       servoThrottleOutput = 0;
@@ -215,6 +235,7 @@ void controllerUpdate(unsigned long now) {
   status.state = localState;
   status.remote = packet;
   status.batteryLow = digitalRead(batteryLowPin) ? 0 : 1;
+  status.bumperPressed = bumperPressed;
   sendPacket(status);
 }
 
@@ -299,7 +320,7 @@ void handlePacketThrottleSetPWM() {
         failure = FailureType::InvalidWhenDisabled;
         break;
       
-      // we can enter PWM controlled motion only if we're not moving
+      // we can enter PWM controlled motion if we're not moving
       case MotionControllerState::Stopped:
         if (packet.Target > 0) {
           localState = MotionControllerState::MovingForwardPWM;
@@ -315,6 +336,7 @@ void handlePacketThrottleSetPWM() {
       // we can stay in forward PWM controlled motion or downgrade PID controlled motion
       case MotionControllerState::MovingForwardPWM:
       case MotionControllerState::MovingForwardPID:
+      case MotionControllerState::CrawlingForward:
         if (packet.Target < 0) {
           // can't immediately transition to backward motion
           failure = FailureType::InvalidStateTransition;
@@ -379,6 +401,7 @@ void handlePacketThrottleSetPID() {
 
       // we can stay in forward PID controlled motion
       case MotionControllerState::MovingForwardPID:
+      case MotionControllerState::CrawlingForward:
         if (packet.Target < 0) {
           // can't immediately transition to backward motion
           failure = FailureType::InvalidStateTransition;
@@ -406,6 +429,47 @@ void handlePacketThrottleSetPID() {
       // we can't directly promote PWM controlled motion to PID controlled motion
       case MotionControllerState::MovingForwardPWM:
       case MotionControllerState::MovingBackwardPWM:
+        failure = FailureType::InvalidStateTransition;
+        break;
+    }
+  }
+
+  auto nack = NackPacket{CommandPacket::SendType, failure};
+  sendPacket(nack);
+}
+
+void handlePacketCrawl() {
+  using CommandPacket = CrawlPacket;
+  using ResponsePacket = NoArgumentPacket<CrawlPacket>;
+
+  if (Serial.available() < CommandPacket::SendTransportSize + 2) {
+    return;
+  }
+
+  auto failure = FailureType::BadChecksum;
+  ResponsePacket response;
+  CommandPacket packet;
+  if (receivePacket(packet)) {
+    switch (localState) {
+      case MotionControllerState::Disabled:
+      case MotionControllerState::Disabling:
+        failure = FailureType::InvalidWhenDisabled;
+        break;
+
+      // we can enter the CrawlingForward state only if we're not moving
+      case MotionControllerState::Stopped:
+      // we can stay in the CrawlingForward state
+      case MotionControllerState::CrawlingForward:
+      // we can degrade the MovingForwardPID state into CrawlingForward
+      case MotionControllerState::MovingForwardPID:
+        localState = MotionControllerState::CrawlingForward;
+        status.motion.Target = 25;
+        status.motion.Enabled = 1;
+        sendPacket(response);
+        return;
+
+      // all other state transitions are invalid
+      default:
         failure = FailureType::InvalidStateTransition;
         break;
     }
@@ -524,6 +588,10 @@ void loop() {
     case PacketType::ThrottleSetPID:
       handlePacketThrottleSetPID();
       break;
+
+    case PacketType::Crawl:
+      handlePacketCrawl();
+      break;
     
     case PacketType::SendArm:
       if (controllerNextUpdate - now < 2) {
@@ -572,6 +640,9 @@ void setup() {
   pinMode(batteryLowPin, INPUT_PULLUP);
   pinMode(servoThrottlePin, OUTPUT);
   pinMode(servoSteeringPin, OUTPUT);
+
+  attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(bumperAPin), bumperContact, RISING);
+  attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(bumperBPin), bumperContact, RISING);
 
   servoSteering.attach(servoSteeringPin);
   servoThrottle.attach(servoThrottlePin);

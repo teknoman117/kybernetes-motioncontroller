@@ -23,6 +23,7 @@ enum class MotionControllerState : uint8_t {
   MovingForwardPID = 0x31,
   MovingBackwardPWM = 0x40,
   MovingBackwardPID = 0x41,
+  CrawlingForward = 0x50,
 };
 
 enum class PacketType : uint8_t {
@@ -31,6 +32,7 @@ enum class PacketType : uint8_t {
   SteeringSet = 0x20,
   ThrottleSetPWM = 0x30,
   ThrottleSetPID = 0x40,
+  Crawl = 0x50,
   SendArm = 0xA0,
   SendKeepalive = 0xA1,
   SendDisarm = 0xA2,
@@ -74,7 +76,7 @@ struct StatusPacket {
   KillSwitchStatusPacket remote;
   MotionControllerState state;
   uint8_t batteryLow;
-  uint8_t align1;
+  uint8_t bumperPressed;
 
   // Motion Packet
   PIDFrame motion;
@@ -102,6 +104,13 @@ struct ThrottleSetPIDPacket {
   static constexpr size_t ReceiveTransportSize = 2;
   static constexpr size_t SendTransportSize = 2;
   int16_t Target;
+} __attribute__((packed));
+
+struct CrawlPacket {
+  static constexpr auto ReceiveType = PacketType::Crawl;
+  static constexpr auto SendType = PacketType::Crawl;
+  static constexpr size_t ReceiveTransportSize = 0;
+  static constexpr size_t SendTransportSize = 0;
 } __attribute__((packed));
 
 struct SendArmPacket {
