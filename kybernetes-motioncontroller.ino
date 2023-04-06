@@ -626,7 +626,7 @@ void loop() {
 
 void setup() {
   // 1 Mbps UART
-  Serial.begin(1000000UL);
+  Serial.begin(250000UL);
 
   // Configure I2C
   Wire.begin();
