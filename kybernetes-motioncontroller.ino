@@ -103,6 +103,8 @@ StatusPacket status = {
   .state = MotionControllerState::Disabled,
   .batteryLow = 0,
   .bumperPressed = 0,
+  .odometer = 0,
+  .unused1 = 0,
   .motion = PIDFrame()
 };
 
@@ -156,7 +158,9 @@ void controllerUpdate(unsigned long now) {
   controllerNextUpdate += 20UL;
 
   // Update PID controller
-  status.motion.nextInput(encoder.readAndReset());
+  auto ticks = encoder.readAndReset();
+  status.odometer += ticks;
+  status.motion.nextInput(ticks);
   pid.compute(status.motion);
 
   if (localState == MotionControllerState::MovingForwardPWM
@@ -553,6 +557,27 @@ void handlePacketSendDisarm() {
   }
 }
 
+void handlePacketResetOdometer() {
+  using CommandPacket = ResetOdometerPacket;
+  using ResponsePacket = NoArgumentPacket<ResetOdometerPacket>;
+
+  if (Serial.available() < CommandPacket::SendTransportSize + 2) {
+    return;
+  }
+
+  auto failure = FailureType::BadChecksum;
+  CommandPacket packet;
+  if (receivePacket(packet)) {
+    status.odometer = 0;
+
+    ResponsePacket response;
+    sendPacket(response);
+  } else {
+    auto nack = NackPacket{CommandPacket::SendType, failure};
+    sendPacket(nack);
+  }
+}
+
 void handlePacketSync() {
   Serial.read();
   sendSyncPacket();
@@ -611,6 +636,10 @@ void loop() {
     
     case PacketType::SendDisarm:
       handlePacketSendDisarm();
+      break;
+
+    case PacketType::ResetOdometer:
+      handlePacketResetOdometer();
       break;
 
     case PacketType::Sync:

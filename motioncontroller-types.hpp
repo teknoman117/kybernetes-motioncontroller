@@ -36,6 +36,7 @@ enum class PacketType : uint8_t {
   SendArm = 0xA0,
   SendKeepalive = 0xA1,
   SendDisarm = 0xA2,
+  ResetOdometer = 0xB0,
   Status = 0xD0,
   Nack = 0xE0,
   Sync = 0xFF,
@@ -70,13 +71,15 @@ struct ConfigurationPacket {
 // send once per 20 ms (every PID controller update)
 struct StatusPacket {
   static constexpr auto ReceiveType = PacketType::Status;
-  static constexpr size_t ReceiveTransportSize = 8 + sizeof(PIDFrame);
+  static constexpr size_t ReceiveTransportSize = 12 + sizeof(PIDFrame);
 
   // System state
   KillSwitchStatusPacket remote;
   MotionControllerState state;
   uint8_t batteryLow;
   uint8_t bumperPressed;
+  int16_t odometer;
+  uint16_t unused1;
 
   // Motion Packet
   PIDFrame motion;
@@ -130,6 +133,13 @@ struct SendKeepalivePacket {
 struct SendDisarmPacket {
   static constexpr auto ReceiveType = PacketType::SendDisarm;
   static constexpr auto SendType = PacketType::SendDisarm;
+  static constexpr size_t ReceiveTransportSize = 0;
+  static constexpr size_t SendTransportSize = 0;
+} __attribute__((packed));
+
+struct ResetOdometerPacket {
+  static constexpr auto ReceiveType = PacketType::ResetOdometer;
+  static constexpr auto SendType = PacketType::ResetOdometer;
   static constexpr size_t ReceiveTransportSize = 0;
   static constexpr size_t SendTransportSize = 0;
 } __attribute__((packed));
