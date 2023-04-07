@@ -78,8 +78,7 @@ struct StatusPacket {
   MotionControllerState state;
   uint8_t batteryLow;
   uint8_t bumperPressed;
-  int16_t odometer;
-  uint16_t unused1;
+  int32_t odometer;
 
   // Motion Packet
   PIDFrame motion;

@@ -104,7 +104,6 @@ StatusPacket status = {
   .batteryLow = 0,
   .bumperPressed = 0,
   .odometer = 0,
-  .unused1 = 0,
   .motion = PIDFrame()
 };
 
