@@ -71,12 +71,15 @@ template<unsigned int ms> struct PID {
       return;
     }
 
+    // hack: ESC reverse direction requires twice the throttle value for the same velocity
+    float local_Kc = (frame.Target < 0) ? Kc * 2.f : Kc;
+
     frame.e = frame.Target - frame.Input[0];
     frame.pTerm = frame.Input[1] - frame.Input[0];
     frame.iTerm = tI * (float) frame.e;
     frame.dTerm = -tD * (float) (frame.Input[0] - 2*frame.Input[1] + frame.Input[2]);
     frame.Output = clamp(
-      frame.Output + Kc * ((float) frame.pTerm + frame.iTerm + frame.dTerm),
+      frame.Output + local_Kc * ((float) frame.pTerm + frame.iTerm + frame.dTerm),
       OutputMinimum,
       OutputMaximum
     );
