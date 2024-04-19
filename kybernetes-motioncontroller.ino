@@ -22,8 +22,9 @@ constexpr uint8_t encoderChannelAPin = 2;
 constexpr uint8_t encoderChannelBPin = 3;
 constexpr uint8_t bumperAPin = 4;
 constexpr uint8_t bumperBPin = 5;
+constexpr uint8_t imuDataReadyPin = 6;
 constexpr uint8_t batteryLowPin = 7;
-constexpr uint8_t servoThrottlePin = 8;
+constexpr uint8_t servoThrottlePin = 10;
 constexpr uint8_t servoSteeringPin = 9;
 
 constexpr float defaultKp = 0.1f;
@@ -665,6 +666,7 @@ void setup() {
   pinMode(encoderChannelBPin, INPUT);
   pinMode(bumperAPin, INPUT_PULLUP);
   pinMode(bumperBPin, INPUT_PULLUP);
+  pinMode(imuDataReadyPin, INPUT);
   pinMode(batteryLowPin, INPUT_PULLUP);
   pinMode(servoThrottlePin, OUTPUT);
   pinMode(servoSteeringPin, OUTPUT);
