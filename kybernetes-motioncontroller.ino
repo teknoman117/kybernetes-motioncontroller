@@ -467,7 +467,7 @@ void handlePacketCrawl() {
       // we can degrade the MovingForwardPID state into CrawlingForward
       case MotionControllerState::MovingForwardPID:
         localState = MotionControllerState::CrawlingForward;
-        status.motion.Target = 25;
+        status.motion.Target = 50;
         status.motion.Enabled = 1;
         sendPacket(response);
         return;
