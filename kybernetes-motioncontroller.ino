@@ -6,7 +6,6 @@
 #define ENCODER_USE_INTERRUPTS
 
 #include <Encoder.h>
-#include <Servo.h>
 #include <Wire.h>
 
 #include <PinChangeInterrupt.h>
@@ -84,9 +83,6 @@ namespace {
 
 Encoder encoder(encoderChannelAPin, encoderChannelBPin);
 
-Servo servoSteering;
-Servo servoThrottle;
-
 PID<20> pid(defaultKp, defaultKi, defaultKd);
 
 ConfigurationPacket configuration = {
@@ -122,22 +118,30 @@ void bumperContact() {
 
 void setSteering(int16_t value) {
   if (value > 0) {
-    servoSteering.writeMicroseconds(value + configuration.servoSteeringDeadzoneLeft);
+    value = value + configuration.servoSteeringDeadzoneLeft;
   } else if (value < 0) {
-    servoSteering.writeMicroseconds(value + configuration.servoSteeringDeadzoneRight);
+    value = value + configuration.servoSteeringDeadzoneRight;
   } else {
-    servoSteering.writeMicroseconds((configuration.servoSteeringDeadzoneLeft + configuration.servoSteeringDeadzoneRight) / 2);
+    value = (configuration.servoSteeringDeadzoneLeft + configuration.servoSteeringDeadzoneRight) / 2;
   }
+
+  // 1 ms = 16000
+  // 1 us = 16
+  OCR1A = value * 16;
 }
 
 void setThrottle(int16_t value) {
   if (value > 0) {
-    servoThrottle.writeMicroseconds(value + configuration.servoThrottleDeadzoneForward);
+    value = value + configuration.servoThrottleDeadzoneForward;
   } else if (value < 0) {
-    servoThrottle.writeMicroseconds(value + configuration.servoThrottleDeadzoneBackward);
+    value = value + configuration.servoThrottleDeadzoneBackward;
   } else {
-    servoThrottle.writeMicroseconds((configuration.servoThrottleDeadzoneForward + configuration.servoThrottleDeadzoneBackward) / 2);
+    value = (configuration.servoThrottleDeadzoneForward + configuration.servoThrottleDeadzoneBackward) / 2;
   }
+
+  // 1 ms = 16000
+  // 1 us = 16
+  OCR1B = value * 16;
 }
 
 bool sendRemoteCommand(uint8_t command) {
@@ -668,14 +672,18 @@ void setup() {
   pinMode(bumperBPin, INPUT_PULLUP);
   pinMode(imuDataReadyPin, INPUT);
   pinMode(batteryLowPin, INPUT_PULLUP);
-  pinMode(servoThrottlePin, OUTPUT);
-  pinMode(servoSteeringPin, OUTPUT);
 
   attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(bumperAPin), bumperContact, RISING);
   attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(bumperBPin), bumperContact, RISING);
 
-  servoSteering.attach(servoSteeringPin);
-  servoThrottle.attach(servoThrottlePin);
+  // Configure Fast-PWM to overflow at 333 Hz.
+  // At 16 MHz, gives 32000 steps across a 180 degree range
+  // 1 ms = 16000
+  DDRB |= _BV(PORTB2) | _BV(PORTB1);
+  TCCR1A = _BV(COM1A1) | _BV(COM1B1) | _BV(WGM11);
+  TCCR1B = _BV(WGM13) | _BV(WGM12) | _BV(CS10);
+  ICR1 = (F_CPU / 333) - 1;
+
   setSteering(0);
   setThrottle(0);
 
