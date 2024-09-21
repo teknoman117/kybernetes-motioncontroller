@@ -14,6 +14,7 @@
 #include "killswitch-types.hpp"
 #include "motioncontroller-types.hpp"
 #include "pid.hpp"
+#include "usfsmax.hpp"
 
 constexpr int killSwitchAddress = 0x08;
 
@@ -81,6 +82,8 @@ namespace {
   }
 }
 
+USFSMAX imu(0x57);
+
 Encoder encoder(encoderChannelAPin, encoderChannelBPin);
 
 PID<20> pid(defaultKp, defaultKi, defaultKd);
@@ -109,11 +112,17 @@ MotionControllerState localState = MotionControllerState::Disabled;
 KillSwitchState remoteState = KillSwitchState::Disarmed;
 
 unsigned long controllerNextUpdate = 0;
+unsigned long imuNextUpdate = 0;
 
 volatile bool bumperContacted = false;
+volatile bool imuDataPending = false;
 
 void bumperContact() {
   bumperContacted = true;
+}
+
+void imuDataReady() {
+  imuDataPending = true;
 }
 
 void setSteering(int16_t value) {
@@ -244,6 +253,7 @@ void controllerUpdate(unsigned long now) {
   status.remote = packet;
   status.batteryLow = digitalRead(batteryLowPin) ? 0 : 1;
   status.bumperPressed = bumperPressed;
+  status.imuStatus = imu.getStatus();
   sendPacket(status);
 }
 
@@ -587,9 +597,40 @@ void handlePacketSync() {
   sendSyncPacket();
 }
 
+void imuUpdate(unsigned long now) {
+  // TODO: millis() can wrap (once every 49 days)
+  if (imuNextUpdate > now) {
+    return;
+  }
+
+  // Next update in 10 ms (from start)
+  imuNextUpdate += 10UL;
+
+  if (imu.isConnected()) {
+    imu.getQUAT();
+    OrientationPacket packet;
+    packet.orientation = imu.getOrientation().quat;
+    sendPacket(packet);
+  }
+}
+
 void loop() {
   auto now = millis();
+  //imuUpdate(now);
   controllerUpdate(now);
+
+  // Process IMU
+  /*if (imu.isConnected()) {
+    if (imuDataPending) {
+      imuDataPending = false;
+      if (imu.poll()) {
+        // send orientation packet
+        OrientationPacket packet;
+        packet.orientation = imu.getOrientation();
+        sendPacket(packet);
+      }
+    }
+  }*/
 
   // Process packets
   if (!Serial.available()) {
@@ -663,8 +704,7 @@ void setup() {
 
   // Configure I2C
   Wire.begin();
-  Wire.setClock(250000UL);
-  Wire.setWireTimeout(1000UL);
+  Wire.setClock(100000UL);
 
   pinMode(encoderChannelAPin, INPUT);
   pinMode(encoderChannelBPin, INPUT);
@@ -675,6 +715,7 @@ void setup() {
 
   attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(bumperAPin), bumperContact, RISING);
   attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(bumperBPin), bumperContact, RISING);
+  //attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(imuDataReadyPin), imuDataReady, RISING);
 
   // Configure Fast-PWM to overflow at 333 Hz.
   // At 16 MHz, gives 32000 steps across a 180 degree range
@@ -687,6 +728,13 @@ void setup() {
   setSteering(0);
   setThrottle(0);
 
+  // Configure IMU
+  imu.start();
+
   sendSyncPacket();
   controllerNextUpdate = millis() + 20UL;
+  imuNextUpdate = millis() + 10UL;
+
+  // raise i2c speed
+  Wire.setClock(400000UL);
 }  

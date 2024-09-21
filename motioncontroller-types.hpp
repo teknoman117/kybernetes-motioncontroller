@@ -9,6 +9,7 @@ extern "C" {
   #include <inttypes.h>
 }
 
+#include "usfsmax-types.h"
 #include "killswitch-types.hpp"
 #include "pid.hpp"
 
@@ -33,6 +34,7 @@ enum class PacketType : uint8_t {
   ThrottleSetPWM = 0x30,
   ThrottleSetPID = 0x40,
   Crawl = 0x50,
+  Orientation = 0x60,
   SendArm = 0xA0,
   SendKeepalive = 0xA1,
   SendDisarm = 0xA2,
@@ -71,7 +73,7 @@ struct ConfigurationPacket {
 // send once per 20 ms (every PID controller update)
 struct StatusPacket {
   static constexpr auto ReceiveType = PacketType::Status;
-  static constexpr size_t ReceiveTransportSize = 12 + sizeof(PIDFrame);
+  static constexpr size_t ReceiveTransportSize = 13 + sizeof(PIDFrame);
 
   // System state
   KillSwitchStatusPacket remote;
@@ -82,6 +84,16 @@ struct StatusPacket {
 
   // Motion Packet
   PIDFrame motion;
+
+  // imu status
+  uint8_t imuStatus;
+} __attribute__((packed));
+
+struct OrientationPacket {
+  static constexpr auto ReceiveType = PacketType::Orientation;
+  static constexpr size_t ReceiveTransportSize = sizeof(quat_t);
+
+  quat_t orientation;
 } __attribute__((packed));
 
 struct SteeringSetPacket {
