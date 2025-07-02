@@ -108,12 +108,11 @@ include $(CHIBIOS)/os/common/ports/AVR/compilers/GCC/mk/port.mk
 
 # List C source files here. (C dependencies are automatically generated.)
 CSRC =  $(ALLCSRC)
-        
+
 # List C++ sources file here.
 CPPSRC = $(ALLCPPSRC) \
 	kybernetes-motioncontroller.cpp \
-	crc8.cpp \
-	usfsmax.cpp
+	crc8.cpp
 
 # Header files here.
 INCDIR = $(CONFDIR) $(ALLINC)

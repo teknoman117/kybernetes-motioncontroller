@@ -16,18 +16,20 @@
 #include "killswitch-types.hpp"
 #include "motioncontroller-types.hpp"
 #include "pid.hpp"
-#include "usfsmax.hpp"
+//#include "usfsmax.hpp"
+#include "lock.hpp"
 
 constexpr int killSwitchAddress = 0x08;
 
-constexpr uint8_t encoderChannelAPin = 2;
-constexpr uint8_t encoderChannelBPin = 3;
-constexpr uint8_t bumperAPin = 4;
-constexpr uint8_t bumperBPin = 5;
-constexpr uint8_t imuDataReadyPin = 6;
-constexpr uint8_t batteryLowPin = 7;
-constexpr uint8_t servoThrottlePin = 10;
-constexpr uint8_t servoSteeringPin = 9;
+#define ENCODER_CHANNEL_A_LINE PAL_LINE(IOPORT4, 2)
+#define ENCODER_CHANNEL_B_LINE PAL_LINE(IOPORT4, 3)
+#define BUMPER_A_LINE          PAL_LINE(IOPORT4, 4)
+#define BUMPER_B_LINE          PAL_LINE(IOPORT4, 5)
+#define IMU_DATA_READ_LINE     PAL_LINE(IOPORT4, 6)
+#define BATTERY_LOW_LINE       PAL_LINE(IOPORT4, 7)
+
+#define SERVO_STEERING_LINE    PAL_LINE(IOPORT2, 1)
+#define SERVO_THROTTLE_LINE    PAL_LINE(IOPORT2, 2)
 
 constexpr float defaultKp = 0.1f;
 constexpr float defaultKi = 0.25f;
@@ -35,41 +37,54 @@ constexpr float defaultKd = 0.01f;
 
 namespace {
   template <typename T> bool getStructFromWireCRC8(uint8_t address, T& obj) {
-    auto length = Wire.requestFrom(address, sizeof(T) + 1);
-    if (length != sizeof(T) + 1) {
-      // drop buffer contents on error
-      while (Wire.available()) {
-        Wire.read();
-      }
+    uint8_t buffer[sizeof(T) + 1];
+    i2cAcquireBus(&I2CD1);
+    auto ret = i2cMasterReceive(&I2CD1, address, buffer, sizeof buffer);
+    i2cReleaseBus(&I2CD1);
+
+    if (ret != MSG_OK
+        || buffer[sizeof buffer - 1] != calculateCRC8(0, buffer, sizeof(T))) {
       return false;
     }
 
-    for (int i = 0; i < sizeof(T); i++) {
-      reinterpret_cast<uint8_t*>(&obj)[i] = Wire.read();
-    }
-
-    uint8_t checksum = Wire.read();
-    return checksum == calculateCRC8(0, reinterpret_cast<uint8_t*>(&obj), sizeof(T));
+    memcpy(reinterpret_cast<uint8_t*>(&obj), buffer, sizeof(T));
+    return true;
   }
 
-  template <typename T> void sendPacket(T& packet) {
+  template <typename Chan, typename T> bool sendPacket(Chan *channel, T& packet) {
     const uint8_t type = (const uint8_t) T::ReceiveType;
 
-    while (Serial.availableForWrite() < T::ReceiveTransportSize + 2);
-    Serial.write(type);
-    Serial.write(reinterpret_cast<const uint8_t*>(&packet), T::ReceiveTransportSize);
+    if (chnWrite(channel, &type, 1) != 1) {
+      // something went wrong
+      return false;
+    }
+
+    if (chnWrite(channel, reinterpret_cast<const uint8_t*>(&packet), T::ReceiveTransportSize)
+        != T::ReceiveTransportSize) {
+      // something went wrong
+      return false;
+    }
 
     uint8_t crc8 = 0;
     crc8 = calculateCRC8(crc8, &type, 1);
     crc8 = calculateCRC8(crc8, reinterpret_cast<const uint8_t*>(&packet), T::ReceiveTransportSize);
-    Serial.write(crc8);
-    return true;
+    return chnWrite(channel, &crc8, 1) == 1;
   }
 
-  template <typename T> bool receivePacket(T& packet) {
-    const uint8_t type = Serial.read();
-    Serial.readBytes(reinterpret_cast<uint8_t*>(&packet), T::SendTransportSize);
-    const uint8_t checksum = Serial.read();
+  template <typename Chan, typename T> bool receivePacket(Chan *channel, T& packet) {
+    const uint8_t type = (const uint8_t) T::SendType;
+
+    if (chnRead(channel, reinterpret_cast<uint8_t*>(&packet), T::SendTransportSize)
+        != T::SendTransportSize) {
+      // something went wrong
+      return false;
+    }
+
+    uint8_t checksum = 0;
+    if (chnRead(channel, &checksum, 1) != 1) {
+      // something went wrong
+      return false;
+    }
 
     uint8_t crc8 = 0;
     crc8 = calculateCRC8(crc8, &type, 1);
@@ -77,16 +92,20 @@ namespace {
     return (crc8 == checksum);
   }
 
-  void sendSyncPacket() {
-    for (int i = 0; i < 16; i++) {
-      Serial.write((uint8_t) PacketType::Sync);
-    }
+  bool sendSyncPacket() {
+    const PacketType packet[16] = {
+      PacketType::Sync, PacketType::Sync, PacketType::Sync, PacketType::Sync,
+      PacketType::Sync, PacketType::Sync, PacketType::Sync, PacketType::Sync,
+      PacketType::Sync, PacketType::Sync, PacketType::Sync, PacketType::Sync,
+      PacketType::Sync, PacketType::Sync, PacketType::Sync, PacketType::Sync,
+    };
+
+    return (chnWrite(&SD1, reinterpret_cast<const uint8_t*>(&packet), sizeof packet)
+        == sizeof packet);
   }
 }
 
-USFSMAX imu(0x57);
-
-Encoder encoder(encoderChannelAPin, encoderChannelBPin);
+//USFSMAX imu(0x57);
 
 PID<20> pid(defaultKp, defaultKi, defaultKd);
 
@@ -113,18 +132,82 @@ MotionControllerState localState = MotionControllerState::Disabled;
 
 KillSwitchState remoteState = KillSwitchState::Disarmed;
 
-unsigned long controllerNextUpdate = 0;
-unsigned long imuNextUpdate = 0;
-
 volatile bool bumperContacted = false;
 volatile bool imuDataPending = false;
+volatile int32_t encoderTicks = 0;
+volatile uint8_t encoderState = 0;
 
-void bumperContact() {
+SEMAPHORE_DECL(stateSemaphore, 1);
+
+static void bumperContact() {
   bumperContacted = true;
 }
 
-void imuDataReady() {
+static void imuDataReady() {
   imuDataPending = true;
+}
+
+static void encoderEvent() {
+  chSysLockFromISR();
+
+  // get the encoder transition map
+  const auto bits = (palReadPort(PAL_PORT(ENCODER_CHANNEL_A_LINE))
+      >> PAL_PAD(ENCODER_CHANNEL_A_LINE)) & 0x3;
+  const auto transitions = (encoderState << 2) | bits;
+  encoderState = bits;
+
+  switch (transitions) {
+    // no change
+    case 0b0000:
+    case 0b0101:
+    case 0b1010:
+    case 0b1111:
+      break;
+
+    // double step
+    case 0b0011:
+    case 0b0110:
+    case 0b1001:
+    case 0b1100:
+      break;
+
+    // forward step
+    case 0b0001:
+    case 0b0111:
+    case 0b1000:
+    case 0b1110:
+      encoderTicks--;
+      break;
+
+    // backward step
+    case 0b0010:
+    case 0b0100:
+    case 0b1011:
+    case 0b1101:
+      encoderTicks++;
+      break;
+  }
+
+  chSysUnlockFromISR();
+}
+
+OSAL_IRQ_HANDLER(INT0_vect) {
+  OSAL_IRQ_PROLOGUE();
+  encoderEvent();
+  OSAL_IRQ_EPILOGUE();
+}
+
+OSAL_IRQ_HANDLER(INT1_vect) {
+  OSAL_IRQ_PROLOGUE();
+  encoderEvent();
+  OSAL_IRQ_EPILOGUE();
+}
+
+// TODO: detect imu interrupt as well
+OSAL_IRQ_HANDLER(PCINT2_vect) {
+  OSAL_IRQ_PROLOGUE();
+  bumperContact();
+  OSAL_IRQ_EPILOGUE();
 }
 
 void setSteering(int16_t value) {
@@ -138,7 +221,7 @@ void setSteering(int16_t value) {
 
   // 1 ms = 16000
   // 1 us = 16
-  OCR1A = value * 16;
+  pwmEnableChannel(&PWMD1, 0, value * 16);
 }
 
 void setThrottle(int16_t value) {
@@ -152,28 +235,27 @@ void setThrottle(int16_t value) {
 
   // 1 ms = 16000
   // 1 us = 16
-  OCR1B = value * 16;
+  pwmEnableChannel(&PWMD1, 1, value * 16);
 }
 
 bool sendRemoteCommand(uint8_t command) {
-  Wire.beginTransmission(killSwitchAddress);
-  Wire.write(command);
-  return Wire.endTransmission() == 0;
+  i2cAcquireBus(&I2CD1);
+  auto ret = i2cMasterTransmit(&I2CD1, killSwitchAddress, &command, sizeof command, nullptr, 0);
+  i2cReleaseBus(&I2CD1);
+  return ret == MSG_OK;
 }
 
-void controllerUpdate(unsigned long now) {
+void controllerUpdate() {
   int16_t servoThrottleOutput = 0;
 
-  // TODO: millis() can wrap (once every 49 days)
-  if (controllerNextUpdate > now) {
-    return;
-  }
-
-  // Next update in 20 ms (from start)
-  controllerNextUpdate += 20UL;
+  // Fetch encoder ticks
+  chSysLock();
+  auto ticks = encoderTicks;
+  encoderTicks = 0;
+  chSysUnlock();
 
   // Update PID controller
-  auto ticks = encoder.readAndReset();
+  Lock lock(&stateSemaphore);
   status.odometer += ticks;
   status.motion.nextInput(ticks);
   pid.compute(status.motion);
@@ -192,7 +274,7 @@ void controllerUpdate(unsigned long now) {
   }
 
   // If we're in CrawlingForward and the bumper has been pressed, transition to stopped
-  uint8_t bumperPressed = digitalRead(bumperAPin) | digitalRead(bumperBPin) | bumperContacted;
+  uint8_t bumperPressed = palReadLine(BUMPER_A_LINE) | palReadLine(BUMPER_B_LINE) | bumperContacted;
   if (localState == MotionControllerState::CrawlingForward
       && bumperPressed) {
     localState = MotionControllerState::Stopped;
@@ -253,25 +335,22 @@ void controllerUpdate(unsigned long now) {
   // Send status packet
   status.state = localState;
   status.remote = packet;
-  status.batteryLow = digitalRead(batteryLowPin) ? 0 : 1;
+  status.batteryLow = palReadLine(BATTERY_LOW_LINE) ? 0 : 1;
   status.bumperPressed = bumperPressed;
-  status.imuStatus = imu.getStatus();
-  sendPacket(status);
+  status.imuStatus = /* imu.getStatus() */ 0;
+  sendPacket(&SD1, status);
 }
 
 void handlePacketConfigurationGet() {
   using CommandPacket = NoArgumentPacket<ConfigurationPacket>;
 
-  if (Serial.available() < CommandPacket::SendTransportSize + 2) {
-    return;
-  }
-
   CommandPacket packet;
-  if (receivePacket(packet)) {
-    sendPacket(configuration);
+  if (receivePacket(&SD1, packet)) {
+    Lock lock(&stateSemaphore);
+    sendPacket(&SD1, configuration);
   } else {
     auto nack = NackPacket{CommandPacket::SendType, FailureType::BadChecksum};
-    sendPacket(nack);
+    sendPacket(&SD1, nack);
   }
 }
 
@@ -279,19 +358,18 @@ void handlePacketConfigurationSet() {
   using CommandPacket = ConfigurationPacket;
   using ResponsePacket = NoArgumentPacket<ConfigurationPacket>;
 
-  if (Serial.available() < CommandPacket::SendTransportSize + 2) {
-    return;
-  }
-
   auto failure = FailureType::BadChecksum;
   CommandPacket packet;
-  if (receivePacket(packet)) {
+  if (receivePacket(&SD1, packet)) {
     if (localState == MotionControllerState::Disabled) {
-      configuration = packet;
-      pid.setTunings(configuration.Kp, configuration.Ki, configuration.Kd);
+      {
+        Lock lock(&stateSemaphore);
+        configuration = packet;
+        pid.setTunings(configuration.Kp, configuration.Ki, configuration.Kd);
+      }
 
       ResponsePacket response;
-      sendPacket(response);
+      sendPacket(&SD1, response);
       return;
     } else {
       failure = FailureType::InvalidWhenActive;
@@ -299,26 +377,25 @@ void handlePacketConfigurationSet() {
   }
 
   auto nack = NackPacket{CommandPacket::SendType, failure};
-  sendPacket(nack);
+  sendPacket(&SD1, nack);
 }
 
 void handlePacketSteeringSet() {
   using CommandPacket = SteeringSetPacket;
   using ResponsePacket = NoArgumentPacket<SteeringSetPacket>;
 
-  if (Serial.available() < CommandPacket::SendTransportSize + 2) {
-    return;
-  }
-
   CommandPacket packet;
-  if (receivePacket(packet)) {
-    setSteering(packet.servoSteeringOutput);
+  if (receivePacket(&SD1, packet)) {
+    {
+      Lock lock(&stateSemaphore);
+      setSteering(packet.servoSteeringOutput);
+    }
 
     ResponsePacket response;
-    sendPacket(response);
+    sendPacket(&SD1, response);
   } else {
     auto nack = NackPacket{CommandPacket::SendType, FailureType::BadChecksum};
-    sendPacket(nack);
+    sendPacket(&SD1, nack);
   }
 }
 
@@ -326,14 +403,11 @@ void handlePacketThrottleSetPWM() {
   using CommandPacket = ThrottleSetPWMPacket;
   using ResponsePacket = NoArgumentPacket<ThrottleSetPWMPacket>;
 
-  if (Serial.available() < CommandPacket::SendTransportSize + 2) {
-    return;
-  }
-
   auto failure = FailureType::BadChecksum;
   ResponsePacket response;
   CommandPacket packet;
-  if (receivePacket(packet)) {
+  if (receivePacket(&SD1, packet)) {
+    Lock lock(&stateSemaphore);
     switch (localState) {
       case MotionControllerState::Disabled:
       case MotionControllerState::Disabling:
@@ -350,7 +424,7 @@ void handlePacketThrottleSetPWM() {
 
         status.motion.Target = packet.Target;
         status.motion.Enabled = 0;
-        sendPacket(response);
+        sendPacket(&SD1, response);
         return;
 
       // we can stay in forward PWM controlled motion or downgrade PID controlled motion
@@ -365,7 +439,7 @@ void handlePacketThrottleSetPWM() {
 
         status.motion.Target = packet.Target;
         status.motion.Enabled = 0;
-        sendPacket(response);
+        sendPacket(&SD1, response);
         return;
 
       // we can stay in backward PWM controlled motion or downgrade PID controlled motion
@@ -379,27 +453,24 @@ void handlePacketThrottleSetPWM() {
 
         status.motion.Target = packet.Target;
         status.motion.Enabled = 0;
-        sendPacket(response);
+        sendPacket(&SD1, response);
         return;
     }
   }
 
   auto nack = NackPacket{CommandPacket::SendType, failure};
-  sendPacket(nack);
+  sendPacket(&SD1, nack);
 }
 
 void handlePacketThrottleSetPID() {
   using CommandPacket = ThrottleSetPIDPacket;
   using ResponsePacket = NoArgumentPacket<ThrottleSetPIDPacket>;
 
-  if (Serial.available() < CommandPacket::SendTransportSize + 2) {
-    return;
-  }
-
   auto failure = FailureType::BadChecksum;
   ResponsePacket response;
   CommandPacket packet;
-  if (receivePacket(packet)) {
+  if (receivePacket(&SD1, packet)) {
+    Lock lock(&stateSemaphore);
     switch (localState) {
       case MotionControllerState::Disabled:
       case MotionControllerState::Disabling:
@@ -416,7 +487,7 @@ void handlePacketThrottleSetPID() {
 
         status.motion.Target = packet.Target;
         status.motion.Enabled = 1;
-        sendPacket(response);
+        sendPacket(&SD1, response);
         return;
 
       // we can stay in forward PID controlled motion
@@ -430,7 +501,7 @@ void handlePacketThrottleSetPID() {
 
         status.motion.Target = packet.Target;
         status.motion.Enabled = 1;
-        sendPacket(response);
+        sendPacket(&SD1, response);
         return;
 
       // we can stay in backward PID controlled motion
@@ -443,7 +514,7 @@ void handlePacketThrottleSetPID() {
 
         status.motion.Target = packet.Target;
         status.motion.Enabled = 1;
-        sendPacket(response);
+        sendPacket(&SD1, response);
         return;
 
       // we can't directly promote PWM controlled motion to PID controlled motion
@@ -455,21 +526,18 @@ void handlePacketThrottleSetPID() {
   }
 
   auto nack = NackPacket{CommandPacket::SendType, failure};
-  sendPacket(nack);
+  sendPacket(&SD1, nack);
 }
 
 void handlePacketCrawl() {
   using CommandPacket = CrawlPacket;
   using ResponsePacket = NoArgumentPacket<CrawlPacket>;
 
-  if (Serial.available() < CommandPacket::SendTransportSize + 2) {
-    return;
-  }
-
   auto failure = FailureType::BadChecksum;
   ResponsePacket response;
   CommandPacket packet;
-  if (receivePacket(packet)) {
+  if (receivePacket(&SD1, packet)) {
+    Lock lock(&stateSemaphore);
     switch (localState) {
       case MotionControllerState::Disabled:
       case MotionControllerState::Disabling:
@@ -485,7 +553,7 @@ void handlePacketCrawl() {
         localState = MotionControllerState::CrawlingForward;
         status.motion.Target = 50;
         status.motion.Enabled = 1;
-        sendPacket(response);
+        sendPacket(&SD1, response);
         return;
 
       // all other state transitions are invalid
@@ -496,25 +564,22 @@ void handlePacketCrawl() {
   }
 
   auto nack = NackPacket{CommandPacket::SendType, failure};
-  sendPacket(nack);
+  sendPacket(&SD1, nack);
 }
 
 void handlePacketSendArm() {
   using CommandPacket = SendArmPacket;
   using ResponsePacket = NoArgumentPacket<SendArmPacket>;
 
-  if (Serial.available() < CommandPacket::SendTransportSize + 2) {
-    return;
-  }
-
   auto failure = FailureType::BadChecksum;
   CommandPacket packet;
-  if (receivePacket(packet)) {
+  if (receivePacket(&SD1, packet)) {
+    Lock lock(&stateSemaphore);
     if (localState == MotionControllerState::Disabled) {
       sendRemoteCommand(commandArm);
 
       ResponsePacket response;
-      sendPacket(response);
+      sendPacket(&SD1, response);
       return;
     } else {
       failure = FailureType::InvalidWhenActive;
@@ -522,26 +587,23 @@ void handlePacketSendArm() {
   }
 
   auto nack = NackPacket{CommandPacket::SendType, failure};
-  sendPacket(nack);
+  sendPacket(&SD1, nack);
 }
 
 void handlePacketSendKeepalive() {
   using CommandPacket = SendKeepalivePacket;
   using ResponsePacket = NoArgumentPacket<SendKeepalivePacket>;
 
-  if (Serial.available() < CommandPacket::SendTransportSize + 2) {
-    return;
-  }
-
   auto failure = FailureType::BadChecksum;
   CommandPacket packet;
-  if (receivePacket(packet)) {
+  if (receivePacket(&SD1, packet)) {
+    Lock lock(&stateSemaphore);
     if (localState != MotionControllerState::Disabled
         && localState != MotionControllerState::Disabling) {
       sendRemoteCommand(commandKeepalive);
 
       ResponsePacket response;
-      sendPacket(response);
+      sendPacket(&SD1, response);
       return;
     } else {
       failure = FailureType::InvalidWhenDisabled;
@@ -549,27 +611,23 @@ void handlePacketSendKeepalive() {
   }
 
   auto nack = NackPacket{CommandPacket::SendType, failure};
-  sendPacket(nack);
+  sendPacket(&SD1, nack);
 }
 
 void handlePacketSendDisarm() {
   using CommandPacket = SendDisarmPacket;
   using ResponsePacket = NoArgumentPacket<SendDisarmPacket>;
 
-  if (Serial.available() < CommandPacket::SendTransportSize + 2) {
-    return;
-  }
-
   auto failure = FailureType::BadChecksum;
   CommandPacket packet;
-  if (receivePacket(packet)) {
+  if (receivePacket(&SD1, packet)) {
     sendRemoteCommand(commandDisarm);
 
     ResponsePacket response;
-    sendPacket(response);
+    sendPacket(&SD1, response);
   } else {
     auto nack = NackPacket{CommandPacket::SendType, failure};
-    sendPacket(nack);
+    sendPacket(&SD1, nack);
   }
 }
 
@@ -577,29 +635,27 @@ void handlePacketResetOdometer() {
   using CommandPacket = ResetOdometerPacket;
   using ResponsePacket = NoArgumentPacket<ResetOdometerPacket>;
 
-  if (Serial.available() < CommandPacket::SendTransportSize + 2) {
-    return;
-  }
-
   auto failure = FailureType::BadChecksum;
   CommandPacket packet;
-  if (receivePacket(packet)) {
-    status.odometer = 0;
+  if (receivePacket(&SD1, packet)) {
+    {
+      Lock lock(&stateSemaphore);
+      status.odometer = 0;
+    }
 
     ResponsePacket response;
-    sendPacket(response);
+    sendPacket(&SD1, response);
   } else {
     auto nack = NackPacket{CommandPacket::SendType, failure};
-    sendPacket(nack);
+    sendPacket(&SD1, nack);
   }
 }
 
 void handlePacketSync() {
-  Serial.read();
   sendSyncPacket();
 }
 
-void imuUpdate(unsigned long now) {
+/*void imuUpdate(unsigned long now) {
   // TODO: millis() can wrap (once every 49 days)
   if (imuNextUpdate > now) {
     return;
@@ -612,14 +668,13 @@ void imuUpdate(unsigned long now) {
     imu.getQUAT();
     OrientationPacket packet;
     packet.orientation = imu.getOrientation().quat;
-    sendPacket(packet);
+    sendPacket(&SD1, packet);
   }
-}
+}*/
 
 void loop() {
-  auto now = millis();
   //imuUpdate(now);
-  controllerUpdate(now);
+  controllerUpdate();
 
   // Process IMU
   /*if (imu.isConnected()) {
@@ -633,15 +688,18 @@ void loop() {
       }
     }
   }*/
+
+  chThdSleepMilliseconds(20);
 }
 
 void packet_loop() {
-  // Process packets
-  if (!Serial.available()) {
+  PacketType packetType = PacketType::None;
+  if (chnRead(&SD1, reinterpret_cast<uint8_t *>(&packetType), sizeof packetType)
+      != sizeof packetType) {
+    // something went wrong
     return;
   }
 
-  PacketType packetType = (PacketType) Serial.peek();
   switch (packetType) {
     case PacketType::ConfigurationSet:
       handlePacketConfigurationSet();
@@ -668,18 +726,10 @@ void packet_loop() {
       break;
 
     case PacketType::SendArm:
-      if (controllerNextUpdate - now < 2) {
-        // prevent us from missing the next status update
-        break;
-      }
       handlePacketSendArm();
       break;
 
     case PacketType::SendKeepalive:
-      if (controllerNextUpdate - now < 2) {
-        // prevent us from missing the next status update
-        break;
-      }
       handlePacketSendKeepalive();
       break;
 
@@ -695,9 +745,9 @@ void packet_loop() {
       handlePacketSync();
       break;
 
+    case PacketType::None:
     default:
       /* ruh roh */
-      Serial.read();
       break;
   }
 }
@@ -705,6 +755,7 @@ void packet_loop() {
 THD_WORKING_AREA(waPacketThread, 128);
 THD_FUNCTION(PacketThread, arg) {
   sdStart(&SD1, NULL);
+  sendSyncPacket();
 
   // packet receiption loop
   while (1) {
@@ -714,41 +765,53 @@ THD_FUNCTION(PacketThread, arg) {
 
 THD_WORKING_AREA(waMainThread, 128);
 THD_FUNCTION(MainThread, arg) {
+  // Set up pin directions
+  palSetLineMode(ENCODER_CHANNEL_A_LINE, PAL_MODE_INPUT);
+  palSetLineMode(ENCODER_CHANNEL_B_LINE, PAL_MODE_INPUT);
+  palSetLineMode(BUMPER_A_LINE, PAL_MODE_INPUT_PULLUP);
+  palSetLineMode(BUMPER_B_LINE, PAL_MODE_INPUT_PULLUP);
+  palSetLineMode(IMU_DATA_READ_LINE, PAL_MODE_INPUT);
+  palSetLineMode(BATTERY_LOW_LINE, PAL_MODE_INPUT_PULLUP);
+  palSetLineMode(SERVO_STEERING_LINE, PAL_MODE_OUTPUT_PUSHPULL);
+  palSetLineMode(SERVO_THROTTLE_LINE, PAL_MODE_OUTPUT_PUSHPULL);
+
   // Configure I2C
-  Wire.begin();
-  Wire.setClock(100000UL);
-
-  pinMode(encoderChannelAPin, INPUT);
-  pinMode(encoderChannelBPin, INPUT);
-  pinMode(bumperAPin, INPUT_PULLUP);
-  pinMode(bumperBPin, INPUT_PULLUP);
-  pinMode(imuDataReadyPin, INPUT);
-  pinMode(batteryLowPin, INPUT_PULLUP);
-
-  attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(bumperAPin), bumperContact, RISING);
-  attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(bumperBPin), bumperContact, RISING);
-  //attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(imuDataReadyPin), imuDataReady, RISING);
+  // TODO: check if we need to start at 100 Kbps, because we do end up in 400 Kbps
+  static const I2CConfig config = {
+    .clock_speed = 400000UL
+  };
+  i2cStart(&I2CD1, &config);
 
   // Configure Fast-PWM to overflow at 333 Hz.
   // At 16 MHz, gives 32000 steps across a 180 degree range
   // 1 ms = 16000
-  DDRB |= _BV(PORTB2) | _BV(PORTB1);
-  TCCR1A = _BV(COM1A1) | _BV(COM1B1) | _BV(WGM11);
-  TCCR1B = _BV(WGM13) | _BV(WGM12) | _BV(CS10);
-  ICR1 = (F_CPU / 333) - 1;
-
+  static const PWMConfig pwm1cfg = {
+    F_CPU,                            /* PWM frequency.         */
+    (F_CPU / 333) - 1,                /* PWM period.            */
+    NULL,                             /* TODO: comment.         */
+    {
+      {PWM_OUTPUT_ACTIVE_HIGH, NULL}, /* PWM channel 1 actived. */
+      {PWM_OUTPUT_ACTIVE_HIGH, NULL}, /* PWM channel 2 actived. */
+    },
+  };
+  pwmStart(&PWMD1, &pwm1cfg);
   setSteering(0);
   setThrottle(0);
 
+  // set up encoder interrupts (get BITS 2 and 3 into state BITS 0 and 1)
+  EICRA = _BV(ISC10) | _BV(ISC00);
+  EIMSK = _BV(INT1) | _BV(INT0);
+  encoderState = (palReadPort(PAL_PORT(ENCODER_CHANNEL_A_LINE))
+      >> PAL_PAD(ENCODER_CHANNEL_A_LINE)) & 0x3;
+
+  // set up bumper interrupts
+  PCMSK2 = _BV(PAL_PAD(BUMPER_A_LINE)) | _BV(PAL_PAD(BUMPER_B_LINE));
+  PCICR = _BV(PCIE2);
+
+  //attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(imuDataReadyPin), imuDataReady, RISING);
+
   // Configure IMU
-  imu.start();
-
-  sendSyncPacket();
-  controllerNextUpdate = millis() + 20UL;
-  imuNextUpdate = millis() + 10UL;
-
-  // raise i2c speed
-  Wire.setClock(400000UL);
+  //imu.start();
 
   // call out to what was the arduino loop function
   while (1) {
@@ -757,15 +820,14 @@ THD_FUNCTION(MainThread, arg) {
 }
 
 THD_TABLE_BEGIN
-  THD_TABLE_THREAD(0, "packet", waPacketThread, PacketThread,  NULL)
+  THD_TABLE_THREAD(1, "packet", waPacketThread, PacketThread,  NULL)
   THD_TABLE_THREAD(0, "main", waMainThread, MainThread,  NULL)
 THD_TABLE_END
 
 int main(void) {
   halInit();
   chSysInit();
-
-  // idle loop, don't sleep
   while (true) {
+    // idle loop, don't sleep
   }
 }

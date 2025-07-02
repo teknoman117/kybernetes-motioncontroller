@@ -28,6 +28,7 @@ enum class MotionControllerState : uint8_t {
 };
 
 enum class PacketType : uint8_t {
+  None = 0x00,
   ConfigurationSet = 0x10,
   ConfigurationGet = 0x11,
   SteeringSet = 0x20,
