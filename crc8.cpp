@@ -24,7 +24,7 @@ const uint8_t crc8LookupTable[256] PROGMEM = {
   0xde, 0xd9, 0xd0, 0xd7, 0xc2, 0xc5, 0xcc, 0xcb, 0xe6, 0xe1, 0xe8, 0xef, 0xfa, 0xfd, 0xf4, 0xf3
 };
 
-uint8_t calculateCRC8(uint8_t crc8, uint8_t *data, size_t size) {
+uint8_t calculateCRC8(uint8_t crc8, const uint8_t *data, size_t size) {
   for (size_t i = 0; i < size; i++) {
     crc8 = pgm_read_byte(crc8LookupTable + (data[i] ^ crc8));
   }

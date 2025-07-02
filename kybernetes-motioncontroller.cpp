@@ -5,10 +5,12 @@
 #define ENCODER_OPTIMIZE_INTERRUPTS
 #define ENCODER_USE_INTERRUPTS
 
-#include <Encoder.h>
-#include <Wire.h>
+#include <avr/io.h>
 
-#include <PinChangeInterrupt.h>
+#include "cfg/chconf.h"
+
+#include "hal.h"
+#include "ch.h"
 
 #include "crc8.hpp"
 #include "killswitch-types.hpp"
@@ -52,7 +54,7 @@ namespace {
 
   template <typename T> void sendPacket(T& packet) {
     const uint8_t type = (const uint8_t) T::ReceiveType;
-  
+
     while (Serial.availableForWrite() < T::ReceiveTransportSize + 2);
     Serial.write(type);
     Serial.write(reinterpret_cast<const uint8_t*>(&packet), T::ReceiveTransportSize);
@@ -239,15 +241,15 @@ void controllerUpdate(unsigned long now) {
         setThrottle(0);
       }
       break;
-    
+
     case KillSwitchState::Armed:
       if (localState == MotionControllerState::Disabled
           || localState == MotionControllerState::Disabling) {
-        localState = MotionControllerState::Stopped;        
+        localState = MotionControllerState::Stopped;
       }
       break;
   }
-  
+
   // Send status packet
   status.state = localState;
   status.remote = packet;
@@ -337,7 +339,7 @@ void handlePacketThrottleSetPWM() {
       case MotionControllerState::Disabling:
         failure = FailureType::InvalidWhenDisabled;
         break;
-      
+
       // we can enter PWM controlled motion if we're not moving
       case MotionControllerState::Stopped:
         if (packet.Target > 0) {
@@ -358,7 +360,7 @@ void handlePacketThrottleSetPWM() {
         if (packet.Target < 0) {
           // can't immediately transition to backward motion
           failure = FailureType::InvalidStateTransition;
-          break;          
+          break;
         }
 
         status.motion.Target = packet.Target;
@@ -372,7 +374,7 @@ void handlePacketThrottleSetPWM() {
         if (packet.Target > 0) {
           // can't immediately transition to forward motion
           failure = FailureType::InvalidStateTransition;
-          break;          
+          break;
         }
 
         status.motion.Target = packet.Target;
@@ -403,7 +405,7 @@ void handlePacketThrottleSetPID() {
       case MotionControllerState::Disabling:
         failure = FailureType::InvalidWhenDisabled;
         break;
-      
+
       // we can enter the PID controlled state only if we're not moving
       case MotionControllerState::Stopped:
         if (packet.Target > 0) {
@@ -423,7 +425,7 @@ void handlePacketThrottleSetPID() {
         if (packet.Target < 0) {
           // can't immediately transition to backward motion
           failure = FailureType::InvalidStateTransition;
-          break;          
+          break;
         }
 
         status.motion.Target = packet.Target;
@@ -440,10 +442,10 @@ void handlePacketThrottleSetPID() {
         }
 
         status.motion.Target = packet.Target;
-        status.motion.Enabled = 1;        
+        status.motion.Enabled = 1;
         sendPacket(response);
         return;
-      
+
       // we can't directly promote PWM controlled motion to PID controlled motion
       case MotionControllerState::MovingForwardPWM:
       case MotionControllerState::MovingBackwardPWM:
@@ -631,14 +633,16 @@ void loop() {
       }
     }
   }*/
+}
 
+void packet_loop() {
   // Process packets
   if (!Serial.available()) {
     return;
   }
 
   PacketType packetType = (PacketType) Serial.peek();
-  switch (packetType) {  
+  switch (packetType) {
     case PacketType::ConfigurationSet:
       handlePacketConfigurationSet();
       break;
@@ -662,7 +666,7 @@ void loop() {
     case PacketType::Crawl:
       handlePacketCrawl();
       break;
-    
+
     case PacketType::SendArm:
       if (controllerNextUpdate - now < 2) {
         // prevent us from missing the next status update
@@ -670,7 +674,7 @@ void loop() {
       }
       handlePacketSendArm();
       break;
-    
+
     case PacketType::SendKeepalive:
       if (controllerNextUpdate - now < 2) {
         // prevent us from missing the next status update
@@ -678,7 +682,7 @@ void loop() {
       }
       handlePacketSendKeepalive();
       break;
-    
+
     case PacketType::SendDisarm:
       handlePacketSendDisarm();
       break;
@@ -690,7 +694,7 @@ void loop() {
     case PacketType::Sync:
       handlePacketSync();
       break;
-  
+
     default:
       /* ruh roh */
       Serial.read();
@@ -698,10 +702,18 @@ void loop() {
   }
 }
 
-void setup() {
-  // 1 Mbps UART
-  Serial.begin(250000UL);
+THD_WORKING_AREA(waPacketThread, 128);
+THD_FUNCTION(PacketThread, arg) {
+  sdStart(&SD1, NULL);
 
+  // packet receiption loop
+  while (1) {
+    packet_loop();
+  }
+}
+
+THD_WORKING_AREA(waMainThread, 128);
+THD_FUNCTION(MainThread, arg) {
   // Configure I2C
   Wire.begin();
   Wire.setClock(100000UL);
@@ -737,4 +749,23 @@ void setup() {
 
   // raise i2c speed
   Wire.setClock(400000UL);
-}  
+
+  // call out to what was the arduino loop function
+  while (1) {
+    loop();
+  }
+}
+
+THD_TABLE_BEGIN
+  THD_TABLE_THREAD(0, "packet", waPacketThread, PacketThread,  NULL)
+  THD_TABLE_THREAD(0, "main", waMainThread, MainThread,  NULL)
+THD_TABLE_END
+
+int main(void) {
+  halInit();
+  chSysInit();
+
+  // idle loop, don't sleep
+  while (true) {
+  }
+}

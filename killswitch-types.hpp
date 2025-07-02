@@ -31,6 +31,7 @@ struct KillSwitchStatusPacket {
   // handy shortcuts to the state
   KillSwitchState operator=(const KillSwitchState state_) {
     state = state_;
+    return state;
   }
 } __attribute__((packed));
 

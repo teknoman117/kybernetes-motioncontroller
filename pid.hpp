@@ -7,6 +7,7 @@
 
 extern "C" {
   #include <inttypes.h>
+  #include <string.h>
 }
 
 namespace {
@@ -33,7 +34,7 @@ struct PIDFrame {
   uint8_t Enabled;
 
   void reset() {
-    memset(this, 0, sizeof *this);    
+    memset(this, 0, sizeof *this);
   }
 
   void nextInput(int16_t Input_) {
