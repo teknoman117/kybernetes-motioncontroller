@@ -171,7 +171,7 @@ static void encoderEvent() {
     case 0b1100:
       break;
 
-    // forward step
+    // backward
     case 0b0001:
     case 0b0111:
     case 0b1000:
@@ -179,7 +179,7 @@ static void encoderEvent() {
       encoderTicks--;
       break;
 
-    // backward step
+    // forward
     case 0b0010:
     case 0b0100:
     case 0b1011:
@@ -672,94 +672,69 @@ void handlePacketSync() {
   }
 }*/
 
-void loop() {
-  //imuUpdate(now);
-  controllerUpdate();
-
-  // Process IMU
-  /*if (imu.isConnected()) {
-    if (imuDataPending) {
-      imuDataPending = false;
-      if (imu.poll()) {
-        // send orientation packet
-        OrientationPacket packet;
-        packet.orientation = imu.getOrientation();
-        sendPacket(packet);
-      }
-    }
-  }*/
-
-  chThdSleepMilliseconds(20);
-}
-
-void packet_loop() {
-  PacketType packetType = PacketType::None;
-  if (chnRead(&SD1, reinterpret_cast<uint8_t *>(&packetType), sizeof packetType)
-      != sizeof packetType) {
-    // something went wrong
-    return;
-  }
-
-  switch (packetType) {
-    case PacketType::ConfigurationSet:
-      handlePacketConfigurationSet();
-      break;
-
-    case PacketType::ConfigurationGet:
-      handlePacketConfigurationGet();
-      break;
-
-    case PacketType::SteeringSet:
-      handlePacketSteeringSet();
-      break;
-
-    case PacketType::ThrottleSetPWM:
-      handlePacketThrottleSetPWM();
-      break;
-
-    case PacketType::ThrottleSetPID:
-      handlePacketThrottleSetPID();
-      break;
-
-    case PacketType::Crawl:
-      handlePacketCrawl();
-      break;
-
-    case PacketType::SendArm:
-      handlePacketSendArm();
-      break;
-
-    case PacketType::SendKeepalive:
-      handlePacketSendKeepalive();
-      break;
-
-    case PacketType::SendDisarm:
-      handlePacketSendDisarm();
-      break;
-
-    case PacketType::ResetOdometer:
-      handlePacketResetOdometer();
-      break;
-
-    case PacketType::Sync:
-      handlePacketSync();
-      break;
-
-    case PacketType::None:
-    default:
-      /* ruh roh */
-      break;
-  }
-}
-
 THD_WORKING_AREA(waPacketThread, 128);
 THD_FUNCTION(PacketThread, arg) {
   sdStart(&SD1, NULL);
   sendSyncPacket();
 
-  // packet receiption loop
   while (1) {
-    packet_loop();
+    PacketType packetType = PacketType::None;
+    if (chnRead(&SD1, reinterpret_cast<uint8_t *>(&packetType), sizeof packetType)
+        != sizeof packetType) {
+      // something went wrong
+      return;
+    }
+
+    switch (packetType) {
+      case PacketType::ConfigurationSet:
+        handlePacketConfigurationSet();
+        break;
+
+      case PacketType::ConfigurationGet:
+        handlePacketConfigurationGet();
+        break;
+
+      case PacketType::SteeringSet:
+        handlePacketSteeringSet();
+        break;
+
+      case PacketType::ThrottleSetPWM:
+        handlePacketThrottleSetPWM();
+        break;
+
+      case PacketType::ThrottleSetPID:
+        handlePacketThrottleSetPID();
+        break;
+
+      case PacketType::Crawl:
+        handlePacketCrawl();
+        break;
+
+      case PacketType::SendArm:
+        handlePacketSendArm();
+        break;
+
+      case PacketType::SendKeepalive:
+        handlePacketSendKeepalive();
+        break;
+
+      case PacketType::SendDisarm:
+        handlePacketSendDisarm();
+        break;
+
+      case PacketType::ResetOdometer:
+        handlePacketResetOdometer();
+        break;
+
+      case PacketType::Sync:
+        handlePacketSync();
+        break;
+
+      case PacketType::None:
+      default:
+        /* ruh roh */
+        break;
+    }
   }
 }
 
@@ -815,7 +790,23 @@ THD_FUNCTION(MainThread, arg) {
 
   // call out to what was the arduino loop function
   while (1) {
-    loop();
+    //imuUpdate(now);
+    controllerUpdate();
+
+    // Process IMU
+    /*if (imu.isConnected()) {
+      if (imuDataPending) {
+        imuDataPending = false;
+        if (imu.poll()) {
+          // send orientation packet
+          OrientationPacket packet;
+          packet.orientation = imu.getOrientation();
+          sendPacket(packet);
+        }
+      }
+    }*/
+
+    chThdSleepMilliseconds(20);
   }
 }
 
