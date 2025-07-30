@@ -74,7 +74,7 @@ struct ConfigurationPacket {
 // send once per 20 ms (every PID controller update)
 struct StatusPacket {
   static constexpr auto ReceiveType = PacketType::Status;
-  static constexpr size_t ReceiveTransportSize = 13 + sizeof(PIDFrame);
+  static constexpr size_t ReceiveTransportSize = 19 + sizeof(PIDFrame);
 
   // System state
   KillSwitchStatusPacket remote;
@@ -85,6 +85,11 @@ struct StatusPacket {
 
   // Motion Packet
   PIDFrame motion;
+
+  // current sensor status
+  int16_t batteryVoltage;
+  int16_t batteryCurrent;
+  int16_t batteryPower;
 
   // imu status
   uint8_t imuStatus;

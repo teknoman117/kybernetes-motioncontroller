@@ -21,6 +21,15 @@
 
 constexpr int killSwitchAddress = 0x08;
 
+constexpr int currentSensorAddress = 0x80 >> 1;
+
+#define INA219_CONFIGURATION_REGISTER (0)
+#define INA219_SHUNT_VOLTAGE_REGISTER (1)
+#define INA219_BUS_VOLTAGE_REGISTER   (2)
+#define INA219_POWER_REGISTER         (3)
+#define INA219_CURRENT_REGISTER       (4)
+#define INA219_CALIBRATION_REGISTER   (5)
+
 #define ENCODER_CHANNEL_A_LINE PAL_LINE(IOPORT4, 2)
 #define ENCODER_CHANNEL_B_LINE PAL_LINE(IOPORT4, 3)
 #define BUMPER_A_LINE          PAL_LINE(IOPORT4, 4)
@@ -102,6 +111,52 @@ namespace {
 
     return (chnWrite(&SD1, reinterpret_cast<const uint8_t*>(&packet), sizeof packet)
         == sizeof packet);
+  }
+
+  bool resetCurrentSensor(uint8_t address) {
+    const uint8_t buffer[] = { INA219_CONFIGURATION_REGISTER, 0x80, 0x00 };
+    i2cAcquireBus(&I2CD1);
+    auto ret = i2cMasterTransmitTimeout(&I2CD1, address, buffer, sizeof buffer, nullptr, 0, 5);
+    i2cReleaseBus(&I2CD1);
+    return (ret == MSG_OK);
+  }
+
+  bool configureCurrentSensor(uint8_t address, uint16_t configuration, uint16_t calibration) {
+    const uint8_t configureBuffer[] = {
+        INA219_CONFIGURATION_REGISTER,
+        static_cast<uint8_t>((configuration >> 8) & 0xFF),
+        static_cast<uint8_t>(configuration & 0xFF)
+    };
+    const uint8_t calibrationBuffer[] = {
+        INA219_CALIBRATION_REGISTER,
+        static_cast<uint8_t>((calibration >> 8) & 0xFF),
+        static_cast<uint8_t>(calibration & 0xFF)
+    };
+
+    i2cAcquireBus(&I2CD1);
+    auto ret = i2cMasterTransmitTimeout(&I2CD1, address, configureBuffer, sizeof configureBuffer, nullptr, 0, 5);
+    if (ret != MSG_OK) {
+      i2cReleaseBus(&I2CD1);
+      return false;
+    }
+
+    ret = i2cMasterTransmitTimeout(&I2CD1, address, calibrationBuffer, sizeof calibrationBuffer, nullptr, 0, 5);
+    i2cReleaseBus(&I2CD1);
+    return (ret == MSG_OK);
+  }
+
+  int16_t getCurrentSensorRegister(uint8_t address, const uint8_t registerAddress = INA219_BUS_VOLTAGE_REGISTER) {
+    uint8_t value[2] = { 0, 0 };
+
+
+    i2cAcquireBus(&I2CD1);
+    auto ret = i2cMasterTransmitTimeout(&I2CD1, address, &registerAddress, 1, value, sizeof value, 5);
+    i2cReleaseBus(&I2CD1);
+    if (ret != MSG_OK) {
+      return 0;
+    }
+
+    return (static_cast<int16_t>(value[0]) << 8) | static_cast<int16_t>(value[1]);
   }
 }
 
@@ -302,6 +357,12 @@ void controllerUpdate() {
   if (!getStructFromWireCRC8(killSwitchAddress, packet)) {
     return;
   }
+
+  // TODO: sample the current sensor
+  int16_t busVoltageRegister = getCurrentSensorRegister(currentSensorAddress);
+  status.batteryVoltage = (busVoltageRegister >> 3) << 2; // in millivolts
+  status.batteryCurrent = getCurrentSensorRegister(currentSensorAddress, INA219_CURRENT_REGISTER);
+  status.batteryPower = getCurrentSensorRegister(currentSensorAddress, INA219_POWER_REGISTER);
 
   // TODO: use these to detect state transitions rather than just react to the immedate state
   // e.g. allow for top level state machine "these actions cause transitions" rather than this
@@ -787,6 +848,11 @@ THD_FUNCTION(MainThread, arg) {
 
   // Configure IMU
   //imu.start();
+
+  // Configure current sensor
+  resetCurrentSensor(currentSensorAddress);
+  chThdSleepMilliseconds(1);
+  configureCurrentSensor(currentSensorAddress, 0b0000111001100111, 23967);
 
   // call out to what was the arduino loop function
   while (1) {
