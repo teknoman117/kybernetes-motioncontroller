@@ -26,8 +26,8 @@
  * WITH THE SOFTWARE.
  */
 
-#ifndef usfsmax_types_h
-#define usfsmax_types_h
+#ifndef types_h
+#define types_h
 
 /*************************************************************************************************/
 /*************                                                                     ***************/
@@ -93,16 +93,4 @@ typedef struct
   uint8_t cal_good;                        // Byte to verify valid cal is in EEPROM
 } full_adv_cal_t;
 
-typedef struct
-{
-  float q[4];
-} quat_t __attribute__((packed));
-
-typedef struct
-{
-  quat_t quat;
-  int16_t accLIN[3];
-  int16_t grav[3];
-} quat_lin_t __attribute__((packed));
-
-#endif // usfsmax_types_h
+#endif // types_h

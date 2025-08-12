@@ -26,10 +26,10 @@
  * WITH THE SOFTWARE.
  */
 
-#ifndef usfsmax_def_h
-#define usfsmax_def_h
+#ifndef def_h
+#define def_h
 
-#include "usfsmax-config.h"
+#include "config.h"
 
 /*************************************************************************************************/
 /*************                                                                     ***************/
@@ -170,12 +170,6 @@
   #define M_H                                   23.2519f
   #define MAG_DECLINIATION                      13.2197f
 #endif
-#ifdef SANFRANCISCO_CA_USA
-  #define M_V                                   41.6782f
-  #define M_H                                   22.3530f
-  #define MAG_DECLINIATION                      12.9981f
-  //#define MAG_DECLINIATION                      0.f
-#endif
 #ifdef MISSISSAUGA_ON_CA
   #define M_V                                   50.1566f
   #define M_H                                   18.8467f
@@ -191,4 +185,4 @@
   #error "Is this board a USFSMAX?"
 #endif
 
-#endif // usfsmax_def_h
+#endif // def_h

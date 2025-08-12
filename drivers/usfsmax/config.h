@@ -26,8 +26,8 @@
  * WITH THE SOFTWARE.
  */
 
-#ifndef usfsmax_config_h
-#define usfsmax_config_h
+#ifndef config_h
+#define config_h
 
 /*************************************************************************************************/
 /*************                                                                     ***************/
@@ -36,17 +36,25 @@
 /*************************************************************************************************/
     #define MAX32660_SLV_ADDR                  (0x57)               // USFS MAX I2C slave address
 
-    #define INT_PIN                            6                    // Uno DRDY pin
+    #define PIGGYBACK                                               // Uncomment to stack the USFSMAX carrier board on the Teensy dev board
+
+    #define INT_PIN                            7                    // USFSMAX breakout board
+    #define LED_PIN                            13                   // Teensy LED
+    #define USFS_GND                           22                   // Teensy GPIO pin for USFSMAX GND
+    #define USFS_VCC                           21                   // Teensy GPIO pin for USFSMAX 3V3
+    #define WAKE_PIN                           20                   // Teensy GPIO pin for USFSMAX wakeup pin
+    #define RESET_PIN                          4                    // Teensy GPIO pin for USFSMAX reset pin
+
 
     // Dynamic Hard Iron corrector (Uncomment one only)
-    #define ENABLE_DHI_CORRECTOR               0x01
-    //#define ENABLE_DHI_CORRECTOR               0x00                 // Default DHI to off. Enable when you are ready to properly train the corrector
+    //#define ENABLE_DHI_CORRECTOR               0x01
+    #define ENABLE_DHI_CORRECTOR               0x00                 // Default DHI to off. Enable when you are ready to properly train the corrector
 
     // Dynamic Hard Iron Corrector allgorithm (Uncomment one only)
     //#define USE_2D_DHI_CORRECTOR               0x01                 // Define as "1" to use the 2D HI corrector instead of the 3D corrector
     #define USE_2D_DHI_CORRECTOR               0x00
 
-    #define SERIAL_DEBUG                                            // Uncomment to see the verbose screen update; comment out for spreadsheet or "MotionCal" GUI output
+    //#define SERIAL_DEBUG                                            // Uncomment to see the verbose screen update; comment out for spreadsheet or "MotionCal" GUI output
     //#define MOTION_CAL_GUI_ENABLED                                  // Uncomment to visualize the magnetometer response surface on the "MotionCal" GUI (https://www.pjrc.com/store/prop_shield.html)
     #define UPDATE_PERIOD                      100                  // Serial update period (ms)
     #define CAL_POINTS                         2048                 // Number or data points collected for gyro and accel/fine mag calibrations
@@ -54,10 +62,14 @@
 
     #define SENSOR_0_WIRE_INSTANCE             Wire                 // I2C Wire Library instance
 
+    // Wire pins (Uncomment one only)
+    //#define I2C_PINS                           I2C_PINS_16_17
+    #define I2C_PINS                           I2C_PINS_18_19
+
     // I2C Clock Speed (Uncomment one only)
-    //#define I2C_CLOCK                          100000               // 100kHz
-    #define I2C_CLOCK                          400000               // 400kHz
-    //#define I2C_CLOCK                          1000000              // 1MHz
+    //#define I2C_CLOCK                          I2C_RATE_100         // 100kHz
+    //#define I2C_CLOCK                          I2C_RATE_400         // 400kHz
+    #define I2C_CLOCK                          I2C_RATE_1000        // 1MHz
 
 /********************                Alternate Fusion Filter                **********************/
     /* Uncomment one only */
@@ -150,7 +162,7 @@
 
     /* LSM6DSM Acc Output Scale. Uncomment only one option */
     #define MAG_SCALE                            0x00               // Not adjustable
-    
+
     /* LSM6DSM Acc Output Scale. Uncomment only one option */
     #define BARO_SCALE                           0x00               // Not adjustable
 
@@ -169,7 +181,7 @@
     //#define LSM6DSM_GYRO_LPF_223
     //#define LSM6DSM_GYRO_LPF_314
     //#define LSM6DSM_GYRO_LPF_655
-    
+
     /* LSM6DSM Gyro high pass filter setting. Uncomment only one option */
     #define LSM6DSM_GYRO_DHPF_CFG              0x00                 // Future option
 
@@ -197,7 +209,7 @@
 
     /* LPS22HB Mag high pass filter setting. Uncomment only one option */
     #define LPS22HB_BARO_HPF                   0x00                 // Future option
-    
+
     /* Aux_1 low pass filter setting. Uncomment only one option */
     #define AUX1_LPF                           0x00                 // Future option
 
@@ -218,13 +230,12 @@
 
 /********************                  Magnetic Constants                  ***********************/
 
-      //#define KELSEYVILLE_CA_USA
+      #define KELSEYVILLE_CA_USA
       //#define DANVILLE_CA_USA
       //#define YUBA_CITY_CA_USA
       //#define SUNNYVALE_CA_USA
-      #define SANFRANCISCO_CA_USA
       //#define MISSISSAUGA_ON_CA
-      
+
 /**************************            End Configuration              ****************************/
 
-#endif // usfsmax_config_h
+#endif

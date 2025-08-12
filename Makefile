@@ -112,7 +112,8 @@ CSRC =  $(ALLCSRC)
 # List C++ sources file here.
 CPPSRC = $(ALLCPPSRC) \
 	kybernetes-motioncontroller.cpp \
-	crc8.cpp
+	crc8.cpp \
+	drivers/usfsmax/USFSMAX.cpp
 
 # Header files here.
 INCDIR = $(CONFDIR) $(ALLINC)

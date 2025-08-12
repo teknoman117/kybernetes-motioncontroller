@@ -16,8 +16,9 @@
 #include "killswitch-types.hpp"
 #include "motioncontroller-types.hpp"
 #include "pid.hpp"
-//#include "usfsmax.hpp"
 #include "lock.hpp"
+
+#include "drivers/usfsmax/USFSMAX.h"
 
 constexpr int killSwitchAddress = 0x08;
 

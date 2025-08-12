@@ -9,7 +9,6 @@ extern "C" {
   #include <inttypes.h>
 }
 
-#include "usfsmax-types.h"
 #include "killswitch-types.hpp"
 #include "pid.hpp"
 
@@ -97,12 +96,12 @@ struct StatusPacket {
   uint8_t imuStatus;
 } __attribute__((packed));
 
-struct OrientationPacket {
+/*struct OrientationPacket {
   static constexpr auto ReceiveType = PacketType::Orientation;
   static constexpr size_t ReceiveTransportSize = sizeof(quat_t);
 
   quat_t orientation;
-} __attribute__((packed));
+} __attribute__((packed));*/
 
 struct SteeringSetPacket {
   static constexpr auto ReceiveType = PacketType::SteeringSet;
