@@ -42,6 +42,7 @@ enum class PacketType : uint8_t {
   ResetOdometer = 0xB0,
   Status = 0xD0,
   Nack = 0xE0,
+  ChecksumError = 0xE1,
   Sync = 0xFF,
 };
 
@@ -50,6 +51,7 @@ enum class FailureType : uint8_t {
   RemotelyDisabled = 0xD0,
   InvalidWhenActive = 0xE0,
   InvalidWhenDisabled = 0xE1,
+  UnsupportedPacketType = 0xFE,
   BadChecksum = 0xFF,
 };
 
@@ -167,6 +169,20 @@ struct NackPacket {
   static constexpr size_t ReceiveTransportSize = 2;
   PacketType packetType;
   FailureType failureType;
+} __attribute__((packed));
+
+// send if a framing error occurred
+struct ChecksumErrorPacket {
+  static constexpr auto ReceiveType = PacketType::ChecksumError;
+  static constexpr size_t ReceiveTransportSize = 0;
+} __attribute__((packed));
+
+// sync packet
+struct SyncPacket {
+  static constexpr auto ReceiveType = PacketType::Sync;
+  static constexpr auto SendType = PacketType::Sync;
+  static constexpr auto ReceiveTransportSize = 0;
+  static constexpr auto SendTransportSize = 0;
 } __attribute__((packed));
 
 // empty type for no argument commands and responses

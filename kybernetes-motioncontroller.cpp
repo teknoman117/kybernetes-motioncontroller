@@ -61,56 +61,85 @@ namespace {
   }
 
   template <typename Chan, typename T> bool sendPacket(Chan *channel, T& packet) {
-    const uint8_t type = (const uint8_t) T::ReceiveType;
-
-    if (chnWrite(channel, &type, 1) != 1) {
-      // something went wrong
-      return false;
-    }
-
-    if (chnWrite(channel, reinterpret_cast<const uint8_t*>(&packet), T::ReceiveTransportSize)
-        != T::ReceiveTransportSize) {
-      // something went wrong
-      return false;
-    }
-
+    uint8_t buffer[64];
+    uint8_t *encode = buffer;
+    uint8_t *codep = encode++;
+    uint8_t code = 1;
     uint8_t crc8 = 0;
-    crc8 = calculateCRC8(crc8, &type, 1);
-    crc8 = calculateCRC8(crc8, reinterpret_cast<const uint8_t*>(&packet), T::ReceiveTransportSize);
-    return chnWrite(channel, &crc8, 1) == 1;
-  }
 
-  template <typename Chan, typename T> bool receivePacket(Chan *channel, T& packet) {
-    const uint8_t type = (const uint8_t) T::SendType;
+    // COBS encode our data
+    auto encode_byte = [&] (const uint8_t b, bool finish = false) {
+      crc8 = calculateCRC8(crc8, &b, 1);
 
-    if (chnRead(channel, reinterpret_cast<uint8_t*>(&packet), T::SendTransportSize)
-        != T::SendTransportSize) {
-      // something went wrong
-      return false;
-    }
+      if (b) {
+        *encode++ = b;
+        code++;
+      }
 
-    uint8_t checksum = 0;
-    if (chnRead(channel, &checksum, 1) != 1) {
-      // something went wrong
-      return false;
-    }
-
-    uint8_t crc8 = 0;
-    crc8 = calculateCRC8(crc8, &type, 1);
-    crc8 = calculateCRC8(crc8, reinterpret_cast<const uint8_t*>(&packet), T::SendTransportSize);
-    return (crc8 == checksum);
-  }
-
-  bool sendSyncPacket() {
-    const PacketType packet[16] = {
-      PacketType::Sync, PacketType::Sync, PacketType::Sync, PacketType::Sync,
-      PacketType::Sync, PacketType::Sync, PacketType::Sync, PacketType::Sync,
-      PacketType::Sync, PacketType::Sync, PacketType::Sync, PacketType::Sync,
-      PacketType::Sync, PacketType::Sync, PacketType::Sync, PacketType::Sync,
+      if (!b || code == 0xff) {
+        *codep = code;
+        code = 1;
+        codep = encode;
+        if (!b || !finish) {
+          ++encode;
+        }
+      }
     };
 
-    return (chnWrite(&SD1, reinterpret_cast<const uint8_t*>(&packet), sizeof packet)
-        == sizeof packet);
+    // encode our type byte
+    encode_byte((const uint8_t) T::ReceiveType);
+
+    // encode packet data
+    uint8_t length = T::ReceiveTransportSize;
+    for (const uint8_t *byte = reinterpret_cast<const uint8_t*>(&packet);
+        length-- && encode != buffer+60; ++byte) {
+      encode_byte(*byte);
+    }
+
+    // encode checksum
+    encode_byte(crc8, true);
+
+    // final overhead byte update
+    *codep = code;
+    *encode++ = 0;
+    auto ret = chnWrite(channel, buffer, encode - buffer);
+    return ret == encode - buffer;
+  }
+
+  template <typename Chan>
+  bool receivePacket(Chan *channel, uint8_t* data, size_t n) {
+    uint8_t* decode = data;
+
+    // COBS decode our data
+    uint8_t code = 0xff;
+    uint8_t block = 0;
+    while (decode != data + n) {
+      auto byte = chnGetTimeout(channel, TIME_INFINITE);
+
+      if (block) {
+        *decode++ = byte;
+      } else {
+        block = byte;
+        if (block && (code != 0xff)) {
+          *decode++ = 0;
+        }
+        code = block;
+        if (!code) {
+          // end-of-packet
+          break;
+        }
+      }
+      --block;
+    }
+
+    // verify checksum
+    size_t length = decode - data;
+    if (length < 2) {
+      return false;
+    }
+
+    uint8_t crc8 = calculateCRC8(0, data, length - 1);
+    return (crc8 == *(decode - 1));
   }
 
   bool resetCurrentSensor(uint8_t address) {
@@ -402,72 +431,56 @@ void controllerUpdate() {
   sendPacket(&SD1, status);
 }
 
-void handlePacketConfigurationGet() {
+void handlePacketConfigurationGet(const uint8_t *buffer) {
   using CommandPacket = NoArgumentPacket<ConfigurationPacket>;
 
-  CommandPacket packet;
-  if (receivePacket(&SD1, packet)) {
-    Lock lock(&stateSemaphore);
-    sendPacket(&SD1, configuration);
-  } else {
-    auto nack = NackPacket{CommandPacket::SendType, FailureType::BadChecksum};
-    sendPacket(&SD1, nack);
-  }
+  auto& packet = *reinterpret_cast<const CommandPacket*>(buffer);
+  Lock lock(&stateSemaphore);
+  sendPacket(&SD1, configuration);
 }
 
-void handlePacketConfigurationSet() {
+void handlePacketConfigurationSet(const uint8_t *buffer) {
   using CommandPacket = ConfigurationPacket;
   using ResponsePacket = NoArgumentPacket<ConfigurationPacket>;
 
-  auto failure = FailureType::BadChecksum;
-  CommandPacket packet;
-  if (receivePacket(&SD1, packet)) {
-    if (localState == MotionControllerState::Disabled) {
-      {
-        Lock lock(&stateSemaphore);
-        configuration = packet;
-        pid.setTunings(configuration.Kp, configuration.Ki, configuration.Kd);
-      }
-
-      ResponsePacket response;
-      sendPacket(&SD1, response);
-      return;
-    } else {
-      failure = FailureType::InvalidWhenActive;
-    }
-  }
-
-  auto nack = NackPacket{CommandPacket::SendType, failure};
-  sendPacket(&SD1, nack);
-}
-
-void handlePacketSteeringSet() {
-  using CommandPacket = SteeringSetPacket;
-  using ResponsePacket = NoArgumentPacket<SteeringSetPacket>;
-
-  CommandPacket packet;
-  if (receivePacket(&SD1, packet)) {
+  auto& packet = *reinterpret_cast<const CommandPacket*>(buffer);
+  if (localState == MotionControllerState::Disabled) {
     {
       Lock lock(&stateSemaphore);
-      setSteering(packet.servoSteeringOutput);
+      configuration = packet;
+      pid.setTunings(configuration.Kp, configuration.Ki, configuration.Kd);
     }
 
     ResponsePacket response;
     sendPacket(&SD1, response);
   } else {
-    auto nack = NackPacket{CommandPacket::SendType, FailureType::BadChecksum};
+    auto nack = NackPacket{CommandPacket::SendType, FailureType::InvalidWhenActive};
     sendPacket(&SD1, nack);
   }
 }
 
-void handlePacketThrottleSetPWM() {
+void handlePacketSteeringSet(const uint8_t *buffer) {
+  using CommandPacket = SteeringSetPacket;
+  using ResponsePacket = NoArgumentPacket<SteeringSetPacket>;
+
+  auto& packet = *reinterpret_cast<const CommandPacket*>(buffer);
+  {
+    Lock lock(&stateSemaphore);
+    setSteering(packet.servoSteeringOutput);
+  }
+
+  ResponsePacket response;
+  sendPacket(&SD1, response);
+}
+
+void handlePacketThrottleSetPWM(const uint8_t *buffer) {
   using CommandPacket = ThrottleSetPWMPacket;
   using ResponsePacket = NoArgumentPacket<ThrottleSetPWMPacket>;
 
   auto failure = FailureType::BadChecksum;
   ResponsePacket response;
-  CommandPacket packet;
-  if (receivePacket(&SD1, packet)) {
+  auto& packet = *reinterpret_cast<const CommandPacket*>(buffer);
+  {
     Lock lock(&stateSemaphore);
     switch (localState) {
       case MotionControllerState::Disabled:
@@ -523,14 +536,14 @@ void handlePacketThrottleSetPWM() {
   sendPacket(&SD1, nack);
 }
 
-void handlePacketThrottleSetPID() {
+void handlePacketThrottleSetPID(const uint8_t *buffer) {
   using CommandPacket = ThrottleSetPIDPacket;
   using ResponsePacket = NoArgumentPacket<ThrottleSetPIDPacket>;
 
   auto failure = FailureType::BadChecksum;
   ResponsePacket response;
-  CommandPacket packet;
-  if (receivePacket(&SD1, packet)) {
+  auto& packet = *reinterpret_cast<const CommandPacket*>(buffer);
+  {
     Lock lock(&stateSemaphore);
     switch (localState) {
       case MotionControllerState::Disabled:
@@ -590,14 +603,14 @@ void handlePacketThrottleSetPID() {
   sendPacket(&SD1, nack);
 }
 
-void handlePacketCrawl() {
+void handlePacketCrawl(const uint8_t *buffer) {
   using CommandPacket = CrawlPacket;
   using ResponsePacket = NoArgumentPacket<CrawlPacket>;
 
   auto failure = FailureType::BadChecksum;
   ResponsePacket response;
-  CommandPacket packet;
-  if (receivePacket(&SD1, packet)) {
+  auto& packet = *reinterpret_cast<const CommandPacket*>(buffer);
+  {
     Lock lock(&stateSemaphore);
     switch (localState) {
       case MotionControllerState::Disabled:
@@ -628,13 +641,13 @@ void handlePacketCrawl() {
   sendPacket(&SD1, nack);
 }
 
-void handlePacketSendArm() {
+void handlePacketSendArm(const uint8_t *buffer) {
   using CommandPacket = SendArmPacket;
   using ResponsePacket = NoArgumentPacket<SendArmPacket>;
 
   auto failure = FailureType::BadChecksum;
-  CommandPacket packet;
-  if (receivePacket(&SD1, packet)) {
+  auto& packet = *reinterpret_cast<const CommandPacket*>(buffer);
+  {
     Lock lock(&stateSemaphore);
     if (localState == MotionControllerState::Disabled) {
       sendRemoteCommand(commandArm);
@@ -651,13 +664,13 @@ void handlePacketSendArm() {
   sendPacket(&SD1, nack);
 }
 
-void handlePacketSendKeepalive() {
+void handlePacketSendKeepalive(const uint8_t *buffer) {
   using CommandPacket = SendKeepalivePacket;
   using ResponsePacket = NoArgumentPacket<SendKeepalivePacket>;
 
   auto failure = FailureType::BadChecksum;
-  CommandPacket packet;
-  if (receivePacket(&SD1, packet)) {
+  auto& packet = *reinterpret_cast<const CommandPacket*>(buffer);
+  {
     Lock lock(&stateSemaphore);
     if (localState != MotionControllerState::Disabled
         && localState != MotionControllerState::Disabling) {
@@ -675,45 +688,38 @@ void handlePacketSendKeepalive() {
   sendPacket(&SD1, nack);
 }
 
-void handlePacketSendDisarm() {
+void handlePacketSendDisarm(const uint8_t *buffer) {
   using CommandPacket = SendDisarmPacket;
   using ResponsePacket = NoArgumentPacket<SendDisarmPacket>;
 
   auto failure = FailureType::BadChecksum;
-  CommandPacket packet;
-  if (receivePacket(&SD1, packet)) {
-    sendRemoteCommand(commandDisarm);
+  auto& packet = *reinterpret_cast<const CommandPacket*>(buffer);
+  sendRemoteCommand(commandDisarm);
 
-    ResponsePacket response;
-    sendPacket(&SD1, response);
-  } else {
-    auto nack = NackPacket{CommandPacket::SendType, failure};
-    sendPacket(&SD1, nack);
-  }
+  ResponsePacket response;
+  sendPacket(&SD1, response);
 }
 
-void handlePacketResetOdometer() {
+void handlePacketResetOdometer(const uint8_t *buffer) {
   using CommandPacket = ResetOdometerPacket;
   using ResponsePacket = NoArgumentPacket<ResetOdometerPacket>;
 
   auto failure = FailureType::BadChecksum;
-  CommandPacket packet;
-  if (receivePacket(&SD1, packet)) {
-    {
-      Lock lock(&stateSemaphore);
-      status.odometer = 0;
-    }
-
-    ResponsePacket response;
-    sendPacket(&SD1, response);
-  } else {
-    auto nack = NackPacket{CommandPacket::SendType, failure};
-    sendPacket(&SD1, nack);
+  auto& packet = *reinterpret_cast<const CommandPacket*>(buffer);
+  {
+    Lock lock(&stateSemaphore);
+    status.odometer = 0;
   }
+
+  ResponsePacket response;
+  sendPacket(&SD1, response);
 }
 
 void handlePacketSync() {
-  sendSyncPacket();
+  using ResponsePacket = SyncPacket;
+
+  ResponsePacket response;
+  sendPacket(&SD1, response);
 }
 
 /*void imuUpdate(unsigned long now) {
@@ -733,73 +739,74 @@ void handlePacketSync() {
   }
 }*/
 
-THD_WORKING_AREA(waPacketThread, 128);
+THD_WORKING_AREA(waPacketThread, 256);
 THD_FUNCTION(PacketThread, arg) {
   sdStart(&SD1, NULL);
-  sendSyncPacket();
+  //sendSyncPacket();
 
   while (1) {
-    PacketType packetType = PacketType::None;
-    if (chnRead(&SD1, reinterpret_cast<uint8_t *>(&packetType), sizeof packetType)
-        != sizeof packetType) {
-      // something went wrong
-      return;
+    uint8_t buffer[96];
+    if (!receivePacket(&SD1, buffer, sizeof buffer)) {
+      auto nack = ChecksumErrorPacket{};
+      sendPacket(&SD1, nack);
+      continue;
     }
 
+    PacketType packetType = (PacketType) buffer[0];
     switch (packetType) {
       case PacketType::ConfigurationSet:
-        handlePacketConfigurationSet();
+        handlePacketConfigurationSet(buffer + 1);
         break;
 
       case PacketType::ConfigurationGet:
-        handlePacketConfigurationGet();
+        handlePacketConfigurationGet(buffer + 1);
         break;
 
       case PacketType::SteeringSet:
-        handlePacketSteeringSet();
+        handlePacketSteeringSet(buffer + 1);
         break;
 
       case PacketType::ThrottleSetPWM:
-        handlePacketThrottleSetPWM();
+        handlePacketThrottleSetPWM(buffer + 1);
         break;
 
       case PacketType::ThrottleSetPID:
-        handlePacketThrottleSetPID();
+        handlePacketThrottleSetPID(buffer + 1);
         break;
 
       case PacketType::Crawl:
-        handlePacketCrawl();
+        handlePacketCrawl(buffer + 1);
         break;
 
       case PacketType::SendArm:
-        handlePacketSendArm();
+        handlePacketSendArm(buffer + 1);
         break;
 
       case PacketType::SendKeepalive:
-        handlePacketSendKeepalive();
+        handlePacketSendKeepalive(buffer + 1);
         break;
 
       case PacketType::SendDisarm:
-        handlePacketSendDisarm();
+        handlePacketSendDisarm(buffer + 1);
         break;
 
       case PacketType::ResetOdometer:
-        handlePacketResetOdometer();
+        handlePacketResetOdometer(buffer + 1);
         break;
 
       case PacketType::Sync:
         handlePacketSync();
         break;
 
-      case PacketType::None:
       default:
-        /* ruh roh */
+        auto nack = NackPacket{packetType, FailureType::UnsupportedPacketType};
+        sendPacket(&SD1, nack);
         break;
     }
   }
 }
 
-THD_WORKING_AREA(waMainThread, 128);
+THD_WORKING_AREA(waMainThread, 192);
 THD_FUNCTION(MainThread, arg) {
   // Set up pin directions
   palSetLineMode(ENCODER_CHANNEL_A_LINE, PAL_MODE_INPUT);
