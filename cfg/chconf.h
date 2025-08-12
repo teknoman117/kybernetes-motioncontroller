@@ -82,7 +82,7 @@
  *          timeouts.
  */
 #if !defined(CH_CFG_ST_FREQUENCY)
-#define CH_CFG_ST_FREQUENCY                 15624
+#define CH_CFG_ST_FREQUENCY                 10000
 #endif
 
 /**
