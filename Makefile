@@ -106,14 +106,17 @@ include $(CHIBIOS)/os/hal/osal/rt-nil/osal.mk
 include $(CHIBIOS)/os/nil/nil.mk
 include $(CHIBIOS)/os/common/ports/AVR/compilers/GCC/mk/port.mk
 
+# Drivers
+include $(PWD)/drivers/ina219.mk
+include $(PWD)/drivers/usfsmax/usfsmax.mk
+
 # List C source files here. (C dependencies are automatically generated.)
 CSRC =  $(ALLCSRC)
 
 # List C++ sources file here.
 CPPSRC = $(ALLCPPSRC) \
 	kybernetes-motioncontroller.cpp \
-	crc8.cpp \
-	drivers/usfsmax/USFSMAX.cpp
+	crc8.cpp
 
 # Header files here.
 INCDIR = $(CONFDIR) $(ALLINC)
