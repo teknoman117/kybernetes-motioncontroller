@@ -57,7 +57,7 @@ void setup()
     digitalWrite(USFS_VCC, HIGH);
     delay(100);
   #endif
-  
+
   // Open serial port
   Serial.begin(115200);
   delay(4000);
@@ -68,7 +68,7 @@ void setup()
   // Assign Indicator LED
   LEDPIN_PINMODE;
   Alarms::blueLEDoff();
-  
+
   // Initialize USFSMAX_0 I2C bus
   SENSOR_0_WIRE_INSTANCE.begin(I2C_MASTER, 0x00, I2C_PINS, I2C_PULLUP_EXT, I2C_CLOCK);
   delay(100);
@@ -77,7 +77,7 @@ void setup()
 
   // Do I2C bus scan if serial debug is active
   #ifdef SERIAL_DEBUG                                                                                                // Should see MAX32660 slave bus address (default is 0x57)
-    i2c_0.I2Cscan();                                           
+    i2c_0.I2Cscan();
   #endif
 
   // Initialize USFSMAX_0
@@ -85,7 +85,7 @@ void setup()
     Serial.print("Initializing USFSMAX_0...");
     Serial.println("");
   #endif
-  USFSMAX_0.init_USFSMAX();                                                                                          // Configure USFSMAX and sensors 
+  USFSMAX_0.init_USFSMAX();                                                                                          // Configure USFSMAX and sensors
   SENSOR_0_WIRE_INSTANCE.setClock(I2C_CLOCK);                                                                        // Set the I2C clock to high speed for run-mode data collection
   delay(100);
 
@@ -173,7 +173,7 @@ void loop()
       // USFSMAX_0 sensor and raw quaternion outout
       Serial.print("ax = "); Serial.print((int)(1000.0f*accData[0][0])); Serial.print(" ay = "); Serial.print((int)(1000.0f*accData[0][1]));
       Serial.print(" az = "); Serial.print((int)(1000.0f*accData[0][2])); Serial.println(" mg");
-      Serial.print("gx = "); Serial.print(gyroData[0][0], 1); Serial.print(" gy = "); Serial.print(gyroData[0][1], 1); 
+      Serial.print("gx = "); Serial.print(gyroData[0][0], 1); Serial.print(" gy = "); Serial.print(gyroData[0][1], 1);
       Serial.print(" gz = "); Serial.print(gyroData[0][2], 1); Serial.println(" deg/s");
       Serial.print("mx = "); Serial.print(magData[0][0], 1); Serial.print(" my = "); Serial.print(magData[0][1], 1);
       Serial.print(" mz = "); Serial.print(magData[0][2], 1); Serial.println(" uT");
@@ -182,7 +182,7 @@ void loop()
       Serial.print("Baro pressure = "); Serial.print(((float)baroADC[0])/4096.0f); Serial.println(" hPa");
       Serial.println("");
       Serial.print("USFSMAX Quat: "); Serial.print("q0 = "); Serial.print(qt[0][0], 4);
-      Serial.print(" qx = "); Serial.print(qt[0][1], 4); Serial.print(" qy = "); Serial.print(qt[0][2], 4); 
+      Serial.print(" qx = "); Serial.print(qt[0][1], 4); Serial.print(" qy = "); Serial.print(qt[0][2], 4);
       Serial.print(" qz = "); Serial.print(qt[0][3], 4); Serial.println("");
 
       // Euler angles
@@ -321,7 +321,7 @@ void FetchUSFSMAX_Data(USFSMAX* usfsmax, IMU* IMu, uint8_t sensorNUM)
       for(uint8_t i=0; i<3; i++)
       {
         accData[sensorNUM][i] = ((float)accADC[sensorNUM][i])*g_per_count;
-      } 
+      }
     } else                                                                                                           // Calibration data applied locally
     {
       sensor_cal.apply_adv_calibration(accelcal[sensorNUM], accADC[sensorNUM], g_per_count, sensor_point);
@@ -360,6 +360,7 @@ void DRDY_handler_0()
   data_ready[0] = 1;
 }
 
+#ifdef SERIAL_DEBUG
 // Serial interface handler
 void SerialInterface_handler()
 {
@@ -415,7 +416,7 @@ void SerialInterface_handler()
     Serial.println("Magnetometer Sensor Offsets (uT)");
     Serial.println(ellipsoid_magcal[0].V[0], 4);
     Serial.println(ellipsoid_magcal[0].V[1], 4);
-    Serial.println(ellipsoid_magcal[0].V[2], 4); 
+    Serial.println(ellipsoid_magcal[0].V[2], 4);
     Serial.println("");
     Serial.println("Magnetometer Soft Iron Correction Tensor");
     Serial.print(ellipsoid_magcal[0].invW[0][0], 4); Serial.print(",");
@@ -492,7 +493,7 @@ void SerialInterface_handler()
     sensor_cal.sendOneToProceed();                                                                                   // Halt the serial monitor to let the user read the calibration data
   }
   serial_input = 0;
-  
+
   // Hotkey messaging
   Serial.println("'1' Gyro Cal");
   Serial.println("'2' List Cal Data");
@@ -500,3 +501,4 @@ void SerialInterface_handler()
   Serial.println("'4' List USFSMAX Config");
   Serial.println("");
 }
+#endif

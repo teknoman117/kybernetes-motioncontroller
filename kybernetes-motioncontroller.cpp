@@ -8,6 +8,7 @@
 #include <avr/io.h>
 
 #include "cfg/chconf.h"
+#include "cfg/mcuconf.h"
 
 #include "hal.h"
 #include "ch.h"
@@ -18,7 +19,8 @@
 #include "pid.hpp"
 #include "lock.hpp"
 
-#include "drivers/usfsmax/USFSMAX.h"
+#include "ina219.h"
+#include "USFSMAX.h"
 
 constexpr int killSwitchAddress = 0x08;
 

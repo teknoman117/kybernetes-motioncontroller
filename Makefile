@@ -108,7 +108,7 @@ include $(CHIBIOS)/os/common/ports/AVR/compilers/GCC/mk/port.mk
 
 # Drivers
 include $(PWD)/drivers/ina219.mk
-include $(PWD)/drivers/usfsmax/usfsmax.mk
+include $(PWD)/drivers/USFSMAXv1/driver.mk
 
 # List C source files here. (C dependencies are automatically generated.)
 CSRC =  $(ALLCSRC)

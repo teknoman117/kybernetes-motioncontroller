@@ -1,8 +1,8 @@
 # List of all the USFSMAX device files.
-USFSMAXSRC := $(PWD)/drivers/usfsmax/USFSMAX.cpp
+USFSMAXSRC := $(PWD)/drivers/USFSMAXv1/USFSMAX.cpp
 
 # Required include directories
-USFSMAXINC := $(PWD)/drivers/usfsmax
+USFSMAXINC := $(PWD)/drivers/USFSMAXv1
 
 # Shared variables
 ALLCPPSRC += $(USFSMAXSRC)

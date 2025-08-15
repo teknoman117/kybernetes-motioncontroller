@@ -1,0 +1,31 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/drivers",
+                "${workspaceFolder}/drivers/USFSMAXv1",
+                "${workspaceFolder}/ChibiOS/os/nil/include",
+                "${workspaceFolder}/ChibiOS/os/hal/include",
+                "${workspaceFolder}/ChibiOS/os/hal/ports/AVR/MEGA/ATMEGAxx",
+                "${workspaceFolder}/ChibiOS/os/hal/ports/AVR/MEGA/LLD/GPIOv1",
+                "${workspaceFolder}/ChibiOS/os/hal/ports/AVR/MEGA/LLD/I2Cv1",
+                "${workspaceFolder}/ChibiOS/os/hal/ports/AVR/MEGA/LLD/TIMv1",
+                "${workspaceFolder}/ChibiOS/os/hal/ports/AVR/MEGA/LLD/USARTv1",
+                "/usr/avr/include"
+            ],
+            "defines": [
+                "__AVR_ATmega328P__",
+                "F_CPU=16000000"
+            ],
+            "compilerPath": "/usr/lib/llvm/20/bin/clang",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-clang-x64",
+            "compilerArgs": [],
+            "configurationProvider": "ms-vscode.makefile-tools"
+        }
+    ],
+    "version": 4
+}
