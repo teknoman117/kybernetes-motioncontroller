@@ -24,15 +24,6 @@
 
 constexpr int killSwitchAddress = 0x08;
 
-constexpr int currentSensorAddress = 0x80 >> 1;
-
-#define INA219_CONFIGURATION_REGISTER (0)
-#define INA219_SHUNT_VOLTAGE_REGISTER (1)
-#define INA219_BUS_VOLTAGE_REGISTER   (2)
-#define INA219_POWER_REGISTER         (3)
-#define INA219_CURRENT_REGISTER       (4)
-#define INA219_CALIBRATION_REGISTER   (5)
-
 #define ENCODER_CHANNEL_A_LINE PAL_LINE(IOPORT4, 2)
 #define ENCODER_CHANNEL_B_LINE PAL_LINE(IOPORT4, 3)
 #define BUMPER_A_LINE          PAL_LINE(IOPORT4, 4)
@@ -144,53 +135,9 @@ namespace {
     uint8_t crc8 = calculateCRC8(0, data, length - 1);
     return (crc8 == *(decode - 1));
   }
-
-  bool resetCurrentSensor(uint8_t address) {
-    const uint8_t buffer[] = { INA219_CONFIGURATION_REGISTER, 0x80, 0x00 };
-    i2cAcquireBus(&I2CD1);
-    auto ret = i2cMasterTransmitTimeout(&I2CD1, address, buffer, sizeof buffer, nullptr, 0, 5);
-    i2cReleaseBus(&I2CD1);
-    return (ret == MSG_OK);
-  }
-
-  bool configureCurrentSensor(uint8_t address, uint16_t configuration, uint16_t calibration) {
-    const uint8_t configureBuffer[] = {
-        INA219_CONFIGURATION_REGISTER,
-        static_cast<uint8_t>((configuration >> 8) & 0xFF),
-        static_cast<uint8_t>(configuration & 0xFF)
-    };
-    const uint8_t calibrationBuffer[] = {
-        INA219_CALIBRATION_REGISTER,
-        static_cast<uint8_t>((calibration >> 8) & 0xFF),
-        static_cast<uint8_t>(calibration & 0xFF)
-    };
-
-    i2cAcquireBus(&I2CD1);
-    auto ret = i2cMasterTransmitTimeout(&I2CD1, address, configureBuffer, sizeof configureBuffer, nullptr, 0, 5);
-    if (ret != MSG_OK) {
-      i2cReleaseBus(&I2CD1);
-      return false;
-    }
-
-    ret = i2cMasterTransmitTimeout(&I2CD1, address, calibrationBuffer, sizeof calibrationBuffer, nullptr, 0, 5);
-    i2cReleaseBus(&I2CD1);
-    return (ret == MSG_OK);
-  }
-
-  int16_t getCurrentSensorRegister(uint8_t address, const uint8_t registerAddress = INA219_BUS_VOLTAGE_REGISTER) {
-    uint8_t value[2] = { 0, 0 };
-
-
-    i2cAcquireBus(&I2CD1);
-    auto ret = i2cMasterTransmitTimeout(&I2CD1, address, &registerAddress, 1, value, sizeof value, 5);
-    i2cReleaseBus(&I2CD1);
-    if (ret != MSG_OK) {
-      return 0;
-    }
-
-    return (static_cast<int16_t>(value[0]) << 8) | static_cast<int16_t>(value[1]);
-  }
 }
+
+INA219Driver logicPowerSensor;
 
 //USFSMAX imu(0x57);
 
@@ -390,12 +337,6 @@ void controllerUpdate() {
     return;
   }
 
-  // TODO: sample the current sensor
-  int16_t busVoltageRegister = getCurrentSensorRegister(currentSensorAddress);
-  status.batteryVoltage = (busVoltageRegister >> 3) << 2; // in millivolts
-  status.batteryCurrent = getCurrentSensorRegister(currentSensorAddress, INA219_CURRENT_REGISTER);
-  status.batteryPower = getCurrentSensorRegister(currentSensorAddress, INA219_POWER_REGISTER);
-
   // TODO: use these to detect state transitions rather than just react to the immedate state
   // e.g. allow for top level state machine "these actions cause transitions" rather than this
   //      piecemeal method
@@ -424,6 +365,11 @@ void controllerUpdate() {
       }
       break;
   }
+
+  // Sample the power sensor
+  ina219ReadBusVoltage(&logicPowerSensor, &status.batteryVoltage, nullptr, nullptr);
+  ina219ReadCurrent(&logicPowerSensor, &status.batteryCurrent);
+  ina219ReadPower(&logicPowerSensor, &status.batteryPower);
 
   // Send status packet
   status.state = localState;
@@ -822,11 +768,24 @@ THD_FUNCTION(MainThread, arg) {
   palSetLineMode(SERVO_THROTTLE_LINE, PAL_MODE_OUTPUT_PUSHPULL);
 
   // Configure I2C
-  // TODO: check if we need to start at 100 Kbps, because we do end up in 400 Kbps
-  static const I2CConfig config = {
+  static const I2CConfig i2c1Config = {
     .clock_speed = 400000UL
   };
-  i2cStart(&I2CD1, &config);
+  i2cStart(&I2CD1, &i2c1Config);
+
+  // Configure logic power sensor
+  static const INA219Config logicPowerSensorConfig = {
+    .i2cp = &I2CD1,
+    .i2ccfg = &i2c1Config,
+    .slaveaddress = INA219_SAD_A1_A0_GND_GND,
+    .configuration = INA219_CONFIG_GAIN_2_80MV
+      | (INA219_ADC_TIME_17_02MS << INA219_CONFIG_BADCRES_SHIFT)
+      | (INA219_ADC_TIME_17_02MS << INA219_CONFIG_SADCRES_SHIFT)
+      | INA219_MODE_SHUNT_BUS_CONT,
+    .calibration = INA219_CALIBRATION(7.0, 0.008)
+  };
+  ina219ObjectInit(&logicPowerSensor);
+  ina219Start(&logicPowerSensor, &logicPowerSensorConfig);
 
   // Configure Fast-PWM to overflow at 333 Hz.
   // At 16 MHz, gives 32000 steps across a 180 degree range
@@ -858,11 +817,6 @@ THD_FUNCTION(MainThread, arg) {
 
   // Configure IMU
   //imu.start();
-
-  // Configure current sensor
-  resetCurrentSensor(currentSensorAddress);
-  chThdSleepMilliseconds(1);
-  configureCurrentSensor(currentSensorAddress, 0b0000111001100111, 23967);
 
   // call out to what was the arduino loop function
   while (1) {

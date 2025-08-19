@@ -156,37 +156,16 @@ static msg_t ina219_read_register(INA219Driver *devp, ina219_reg_t reg,
 static msg_t ina219_write_register(INA219Driver *devp, ina219_reg_t reg,
                                     uint16_t value) {
   uint8_t txbuf[3];
-
   osalDbgCheck(devp != NULL);
-  osalDbgAssert(devp->state == INA219_READY, "ina219_write_register(), invalid state");
+
+  osalDbgAssert(devp->state == INA219_READY,
+                "ina219_write_register(), invalid state");
 
   txbuf[0] = reg;
   txbuf[1] = (value >> 8) & 0xFF;
   txbuf[2] = value & 0xFF;
 
   return ina219_write_raw(devp, txbuf, 3);
-}
-
-/**
- * @brief   Sets the calibration register.
- * @pre     The I2C interface must be initialized and the driver started.
- *
- * @param[in] devp       pointer to @p INA219Driver object
- * @param[in] calibration calibration value
- * @return               the operation status.
- * @retval MSG_OK        if the function succeeded.
- * @retval MSG_RESET     if one or more I2C errors occurred, the errors can
- *                       be retrieved using @p i2cGetErrors().
- * @retval MSG_TIMEOUT   if a timeout occurred before operation end.
- *
- * @notapi
- */
-static msg_t ina219_set_calibration(INA219Driver *devp, uint16_t calibration) {
-
-  osalDbgCheck(devp != NULL);
-  osalDbgAssert(devp->state == INA219_READY, "ina219_set_calibration(), invalid state");
-
-  return ina219_write_register(devp, INA219_AD_CALIBRATION, calibration);
 }
 
 /*===========================================================================*/
@@ -204,7 +183,6 @@ void ina219ObjectInit(INA219Driver *devp) {
 
   osalDbgCheck(devp != NULL);
 
-  devp->vmt = NULL;
   devp->state = INA219_UNINIT;
   devp->config = NULL;
 }
@@ -218,31 +196,13 @@ void ina219ObjectInit(INA219Driver *devp) {
  * @api
  */
 void ina219Start(INA219Driver *devp, const INA219Config *config) {
-
   osalDbgCheck((devp != NULL) && (config != NULL));
-  osalDbgAssert((devp->state == INA219_STOP) || (devp->state == INA219_UNINIT),
+  osalDbgAssert((devp->state == INA219_STOP) ||
+                (devp->state == INA219_READY),
                 "ina219Start(), invalid state");
-
   devp->config = config;
-
-#if INA219_SHARED_I2C
-  i2cStart(devp->config->i2cp, devp->config->i2ccfg);
-#endif /* INA219_SHARED_I2C */
-
-  /* Configuring device.*/
-  uint16_t config_reg = INA219_CONFIG_BVOLTAGERANGE |
-                        (devp->config->pga_gain << 11) |
-                        (devp->config->bus_adc_res << 7) |
-                        (devp->config->shunt_adc_res << 3) |
-                        devp->config->mode;
-
-  ina219_write_register(devp, INA219_AD_CONFIG, config_reg);
-
-  /* Setting calibration if provided.*/
-  if (devp->config->calibration != 0) {
-    ina219_set_calibration(devp, devp->config->calibration);
-  }
-
+  ina219_write_register(devp, INA219_AD_CONFIG, devp->config->configuration);
+  ina219_write_register(devp, INA219_AD_CALIBRATION, devp->config->calibration);
   devp->state = INA219_READY;
 }
 
@@ -256,31 +216,21 @@ void ina219Start(INA219Driver *devp, const INA219Config *config) {
 void ina219Stop(INA219Driver *devp) {
 
   osalDbgCheck(devp != NULL);
-  osalDbgAssert((devp->state == INA219_STOP) || (devp->state == INA219_READY),
+  osalDbgAssert((devp->state == INA219_STOP) ||
+                (devp->state == INA219_READY),
                 "ina219Stop(), invalid state");
 
   if (devp->state == INA219_READY) {
 #if INA219_SHARED_I2C
-    i2cStop(devp->config->i2cp);
+    i2cAcquireBus(devp->config->i2cp);
+    i2cStart(devp->config->i2cp, devp->config->i2ccfg);
+#endif /* INA219_SHARED_I2C */
+    ina219_write_register(devp, INA219_AD_CONFIG, 0);
+#if INA219_SHARED_I2C
+    i2cReleaseBus(devp->config->i2cp);
 #endif /* INA219_SHARED_I2C */
   }
   devp->state = INA219_STOP;
-}
-
-/**
- * @brief   Resets the INA219.
- *
- * @param[in] devp       pointer to @p INA219Driver object
- * @return               the operation status.
- *
- * @api
- */
-msg_t ina219Reset(INA219Driver *devp) {
-
-  osalDbgCheck(devp != NULL);
-  osalDbgAssert(devp->state == INA219_READY, "ina219Reset(), invalid state");
-
-  return ina219_write_register(devp, INA219_AD_CONFIG, INA219_CONFIG_RESET);
 }
 
 /**
@@ -294,27 +244,19 @@ msg_t ina219Reset(INA219Driver *devp) {
  *
  * @api
  */
-msg_t ina219TriggerConversion(INA219Driver *devp) {
-  uint16_t config_reg;
-
+msg_t ina219Trigger(INA219Driver *devp) {
   osalDbgCheck(devp != NULL);
-  osalDbgAssert(devp->state == INA219_READY, "ina219TriggerConversion(), invalid state");
+  osalDbgAssert(devp->state == INA219_READY,
+                "ina219TriggerConversion(), invalid state");
 
   /* Check if device is in a triggered mode */
-  if ((devp->config->mode != INA219_MODE_SHUNT_TRIG) &&
-      (devp->config->mode != INA219_MODE_BUS_TRIG) &&
-      (devp->config->mode != INA219_MODE_SHUNT_BUS_TRIG)) {
-    return MSG_RESET; /* Not in triggered mode */
-  }
+  // if ((devp->config->mode != INA219_MODE_SHUNT_TRIG) &&
+  //    (devp->config->mode != INA219_MODE_BUS_TRIG) &&
+  //    (devp->config->mode != INA219_MODE_SHUNT_BUS_TRIG)) {
+  //  return MSG_RESET; /* Not in triggered mode */
+  //}
 
-  /* Reconstruct the configuration register to trigger conversion */
-  config_reg = INA219_CONFIG_BVOLTAGERANGE |
-               (devp->config->pga_gain << 11) |
-               (devp->config->bus_adc_res << 7) |
-               (devp->config->shunt_adc_res << 3) |
-               devp->config->mode;
-
-  return ina219_write_register(devp, INA219_AD_CONFIG, config_reg);
+  return ina219_write_register(devp, INA219_AD_CONFIG, devp->config->configuration);
 }
 
 /**
@@ -326,21 +268,12 @@ msg_t ina219TriggerConversion(INA219Driver *devp) {
  *
  * @api
  */
-msg_t ina219ReadShuntVoltage(INA219Driver *devp, float* voltage) {
-  uint16_t raw_value;
-  msg_t msg;
-
+msg_t ina219ReadShuntVoltage(INA219Driver *devp, uint16_t* voltage) {
   osalDbgCheck((devp != NULL) && (voltage != NULL));
-  osalDbgAssert(devp->state == INA219_READY, "ina219ReadShuntVoltage(), invalid state");
+  osalDbgAssert(devp->state == INA219_READY,
+                "ina219ReadShuntVoltage(), invalid state");
 
-  msg = ina219_read_register(devp, INA219_AD_SHUNT_VOLTAGE, &raw_value);
-  if (msg == MSG_OK) {
-    /* Convert raw value to voltage (signed 16-bit, LSB = 10µV) */
-    int16_t signed_value = (int16_t)raw_value;
-    *voltage = signed_value * INA219_SHUNT_VOLTAGE_LSB;
-  }
-
-  return msg;
+  return ina219_read_register(devp, INA219_AD_SHUNT_VOLTAGE, voltage);
 }
 
 /**
@@ -352,25 +285,26 @@ msg_t ina219ReadShuntVoltage(INA219Driver *devp, float* voltage) {
  *
  * @api
  */
-msg_t ina219ReadBusVoltage(INA219Driver *devp, float* voltage) {
-  uint16_t raw_value;
+msg_t ina219ReadBusVoltage(INA219Driver *devp, uint16_t* voltage, bool* ready, bool* overflow) {
+  uint16_t raw;
   msg_t msg;
 
   osalDbgCheck((devp != NULL) && (voltage != NULL));
-  osalDbgAssert(devp->state == INA219_READY, "ina219ReadBusVoltage(), invalid state");
+  osalDbgAssert(devp->state == INA219_READY,
+                "ina219ReadBusVoltage(), invalid state");
 
-  msg = ina219_read_register(devp, INA219_AD_BUS_VOLTAGE, &raw_value);
+  msg = ina219_read_register(devp, INA219_AD_BUS_VOLTAGE, (uint16_t*) &raw);
   if (msg == MSG_OK) {
-    /* Check for overflow or conversion ready flags */
-    if (raw_value & INA219_BUS_VOLTAGE_OVF) {
-      return MSG_RESET; /* Math overflow occurred */
+    if (overflow) {
+      *overflow = !!(raw & 0x1);
+    }
+    if (ready) {
+      *ready = !!(raw & 0x02);
     }
 
-    /* Extract voltage data (bits 15:3, LSB = 4mV) */
-    uint16_t voltage_data = (raw_value & INA219_BUS_VOLTAGE_MASK) >> 3;
-    *voltage = voltage_data * INA219_BUS_VOLTAGE_LSB;
+    // volate is in mV
+    *voltage = (raw & INA219_BUS_VOLTAGE_MASK) >> 1;
   }
-
   return msg;
 }
 
@@ -383,29 +317,12 @@ msg_t ina219ReadBusVoltage(INA219Driver *devp, float* voltage) {
  *
  * @api
  */
-msg_t ina219ReadCurrent(INA219Driver *devp, float* current) {
-  uint16_t raw_value;
-  msg_t msg;
-
+msg_t ina219ReadCurrent(INA219Driver *devp, int16_t* current) {
   osalDbgCheck((devp != NULL) && (current != NULL));
-  osalDbgAssert(devp->state == INA219_READY, "ina219ReadCurrent(), invalid state");
+  osalDbgAssert(devp->state == INA219_READY,
+                "ina219ReadCurrent(), invalid state");
 
-  msg = ina219_read_register(devp, INA219_AD_CURRENT, &raw_value);
-  if (msg == MSG_OK) {
-    /* Convert raw value to current (signed 16-bit) */
-    int16_t signed_value = (int16_t)raw_value;
-
-    /* Current LSB depends on calibration and shunt resistor */
-    /* Current_LSB = 0.04096 / (Cal_Value * R_shunt) */
-    if (devp->config->calibration != 0 && devp->config->shunt_resistor > 0) {
-      float current_lsb = 0.04096f / (devp->config->calibration * devp->config->shunt_resistor);
-      *current = signed_value * current_lsb;
-    } else {
-      *current = 0.0f; /* No calibration set */
-    }
-  }
-
-  return msg;
+  return ina219_read_register(devp, INA219_AD_CURRENT, (uint16_t*) current);
 }
 
 /**
@@ -417,26 +334,12 @@ msg_t ina219ReadCurrent(INA219Driver *devp, float* current) {
  *
  * @api
  */
-msg_t ina219ReadPower(INA219Driver *devp, float* power) {
-  uint16_t raw_value;
-  msg_t msg;
-
+msg_t ina219ReadPower(INA219Driver *devp, int16_t* power) {
   osalDbgCheck((devp != NULL) && (power != NULL));
-  osalDbgAssert(devp->state == INA219_READY, "ina219ReadPower(), invalid state");
+  osalDbgAssert(devp->state == INA219_READY,
+                "ina219ReadPower(), invalid state");
 
-  msg = ina219_read_register(devp, INA219_AD_POWER, &raw_value);
-  if (msg == MSG_OK) {
-    /* Power LSB = 20 * Current_LSB */
-    if (devp->config->calibration != 0 && devp->config->shunt_resistor > 0) {
-      float current_lsb = 0.04096f / (devp->config->calibration * devp->config->shunt_resistor);
-      float power_lsb = 20.0f * current_lsb;
-      *power = raw_value * power_lsb;
-    } else {
-      *power = 0.0f; /* No calibration set */
-    }
-  }
-
-  return msg;
+  return ina219_read_register(devp, INA219_AD_POWER, (uint16_t*) power);
 }
 
 #endif /* HAL_USE_I2C == TRUE */

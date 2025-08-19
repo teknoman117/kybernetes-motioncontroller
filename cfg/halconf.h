@@ -548,6 +548,14 @@
 #define WSPI_USE_MUTUAL_EXCLUSION           TRUE
 #endif
 
+/*===========================================================================*/
+/* INA219 driver related settings.                                             */
+/*===========================================================================*/
+
+#if !defined(INA219_SHARED_I2C) || defined(__DOXYGEN__)
+#define INA219_SHARED_I2C                   TRUE
+#endif
+
 #endif /* HALCONF_H */
 
 /** @} */

@@ -88,7 +88,7 @@ struct StatusPacket {
   PIDFrame motion;
 
   // current sensor status
-  int16_t batteryVoltage;
+  uint16_t batteryVoltage;
   int16_t batteryCurrent;
   int16_t batteryPower;
 

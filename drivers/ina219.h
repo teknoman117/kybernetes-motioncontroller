@@ -57,30 +57,19 @@
  */
 #define INA219_CONFIG_RESET         0x8000U /**< Reset bit                */
 #define INA219_CONFIG_BVOLTAGERANGE 0x2000U /**< Bus voltage range        */
+
 #define INA219_CONFIG_GAIN_MASK     0x1800U /**< PGA gain mask            */
 #define INA219_CONFIG_GAIN_1_40MV   0x0000U /**< PGA gain /1 (40mV)       */
 #define INA219_CONFIG_GAIN_2_80MV   0x0800U /**< PGA gain /2 (80mV)       */
 #define INA219_CONFIG_GAIN_4_160MV  0x1000U /**< PGA gain /4 (160mV)      */
 #define INA219_CONFIG_GAIN_8_320MV  0x1800U /**< PGA gain /8 (320mV)      */
+
 #define INA219_CONFIG_BADCRES_MASK  0x0780U /**< Bus ADC resolution mask  */
-#define INA219_CONFIG_BADCRES_9BIT  0x0000U /**< 9-bit resolution         */
-#define INA219_CONFIG_BADCRES_10BIT 0x0080U /**< 10-bit resolution        */
-#define INA219_CONFIG_BADCRES_11BIT 0x0100U /**< 11-bit resolution        */
-#define INA219_CONFIG_BADCRES_12BIT 0x0180U /**< 12-bit resolution        */
+#define INA219_CONFIG_BADCRES_SHIFT 7
+
 #define INA219_CONFIG_SADCRES_MASK  0x0078U /**< Shunt ADC resolution mask*/
-#define INA219_CONFIG_SADCRES_9BIT  0x0000U /**< 9-bit resolution         */
-#define INA219_CONFIG_SADCRES_10BIT 0x0008U /**< 10-bit resolution        */
-#define INA219_CONFIG_SADCRES_11BIT 0x0010U /**< 11-bit resolution        */
-#define INA219_CONFIG_SADCRES_12BIT 0x0018U /**< 12-bit resolution        */
-#define INA219_CONFIG_MODE_MASK     0x0007U /**< Operating mode mask      */
-#define INA219_CONFIG_MODE_PWRDWN   0x0000U /**< Power down               */
-#define INA219_CONFIG_MODE_SVOLT    0x0001U /**< Shunt voltage triggered  */
-#define INA219_CONFIG_MODE_BVOLT    0x0002U /**< Bus voltage triggered    */
-#define INA219_CONFIG_MODE_SANDBVOLT 0x0003U /**< Shunt and bus triggered */
-#define INA219_CONFIG_MODE_ADCOFF   0x0004U /**< ADC off                  */
-#define INA219_CONFIG_MODE_SVOLT_CONT 0x0005U /**< Shunt voltage continuous*/
-#define INA219_CONFIG_MODE_BVOLT_CONT 0x0006U /**< Bus voltage continuous  */
-#define INA219_CONFIG_MODE_SANDBVOLT_CONT 0x0007U /**< Shunt & bus continuous*/
+#define INA219_CONFIG_SADCRES_SHIFT 3
+
 /** @} */
 
 /**
@@ -90,6 +79,14 @@
 #define INA219_BUS_VOLTAGE_OVF      0x0001U /**< Math overflow flag       */
 #define INA219_BUS_VOLTAGE_CNVR     0x0002U /**< Conversion ready flag    */
 #define INA219_BUS_VOLTAGE_MASK     0xFFF8U /**< Bus voltage data mask    */
+/** @} */
+
+/**
+ * @name INA219 helper macros
+ * @{
+ */
+#define INA219_CURRENT_LSB(max_amps) ((double) (((double) max_amps) / 32768.0))
+#define INA219_CALIBRATION(max_amps, shunt_ohms) ((uint16_t) ( 0.04096 / ( INA219_CURRENT_LSB(max_amps) * ((double) shunt_ohms))))
 /** @} */
 
 /*===========================================================================*/
@@ -148,14 +145,21 @@ typedef enum {
 } ina219_pga_gain_t;
 
 /**
- * @brief   INA219 ADC resolution.
+ * @brief   INA219 ADC conversion time.
  */
 typedef enum {
-  INA219_ADC_RES_9BIT = 0,        /**< 9-bit resolution                 */
-  INA219_ADC_RES_10BIT = 1,       /**< 10-bit resolution                */
-  INA219_ADC_RES_11BIT = 2,       /**< 11-bit resolution                */
-  INA219_ADC_RES_12BIT = 3        /**< 12-bit resolution                */
-} ina219_adc_res_t;
+  INA219_ADC_TIME_84US    = 0x0000U, /**< 9-bit resolution, 84 microsecond conversion time */
+  INA219_ADC_TIME_148US   = 0x0001U, /**< 10-bit resolution, 148 microsecond conversion time */
+  INA219_ADC_TIME_276US   = 0x0002U, /**< 11-bit resolution, 276 microsecond conversion time */
+  INA219_ADC_TIME_532US   = 0x0003U, /**< 12-bit resolution, 532 microsecond conversion time */
+  INA219_ADC_TIME_1_06MS  = 0x0009U, /**< 12-bit resolution, 2x oversampled, 1.06 millisecond conversion time */
+  INA219_ADC_TIME_2_13MS  = 0x000AU, /**< 12-bit resolution, 4x oversampled, 2.13 millisecond conversion time */
+  INA219_ADC_TIME_4_26MS  = 0x000BU, /**< 12-bit resolution, 8x oversampled, 4.26 millisecond conversion time */
+  INA219_ADC_TIME_8_51MS  = 0x000CU, /**< 12-bit resolution, 16x oversampled, 8.51 millisecond conversion time */
+  INA219_ADC_TIME_17_02MS = 0x000DU, /**< 12-bit resolution, 32x oversampled, 17.02 millisecond conversion time */
+  INA219_ADC_TIME_34_05MS = 0x000EU, /**< 12-bit resolution, 64x oversampled, 34.05 millisecond conversion time */
+  INA219_ADC_TIME_68_10MS = 0x000FU  /**< 12-bit resolution, 128x oversampled, 68.10 millisecond conversion time */
+} ina219_adc_time_t;
 
 /**
  * @brief   INA219 operating mode.
@@ -178,12 +182,8 @@ typedef struct {
   I2CDriver                 *i2cp;          /**< I2C driver associated    */
   const I2CConfig           *i2ccfg;        /**< I2C configuration        */
   ina219_sad_t              slaveaddress;   /**< INA219 slave address     */
-  ina219_pga_gain_t         pga_gain;       /**< PGA gain setting         */
-  ina219_adc_res_t          bus_adc_res;    /**< Bus ADC resolution       */
-  ina219_adc_res_t          shunt_adc_res;  /**< Shunt ADC resolution     */
-  ina219_mode_t             mode;           /**< Operating mode           */
-  uint16_t                  calibration;    /**< Calibration value        */
-  float                     shunt_resistor; /**< Shunt resistor value (Ω) */
+  uint16_t                  configuration;
+  uint16_t                  calibration;
 } INA219Config;
 
 /**
@@ -214,8 +214,6 @@ typedef struct INA219Driver INA219Driver;
  * @brief   INA219 driver class.
  */
 struct INA219Driver {
-  /** @brief Virtual Methods Table.*/
-  const struct INA219VMT  *vmt;
   _ina219_data
 };
 /** @} */
@@ -234,12 +232,11 @@ extern "C" {
   void ina219ObjectInit(INA219Driver *devp);
   void ina219Start(INA219Driver *devp, const INA219Config *config);
   void ina219Stop(INA219Driver *devp);
-  msg_t ina219Reset(INA219Driver *devp);
-  msg_t ina219TriggerConversion(INA219Driver *devp);
-  msg_t ina219ReadShuntVoltage(INA219Driver *devp, float* voltage);
-  msg_t ina219ReadBusVoltage(INA219Driver *devp, float* voltage);
-  msg_t ina219ReadCurrent(INA219Driver *devp, float* current);
-  msg_t ina219ReadPower(INA219Driver *devp, float* power);
+  msg_t ina219Trigger(INA219Driver *devp);
+  msg_t ina219ReadShuntVoltage(INA219Driver *devp, uint16_t* voltage);
+  msg_t ina219ReadBusVoltage(INA219Driver *devp, uint16_t* voltage, bool* ready, bool* overflow);
+  msg_t ina219ReadCurrent(INA219Driver *devp, int16_t* current);
+  msg_t ina219ReadPower(INA219Driver *devp, int16_t* power);
 #ifdef __cplusplus
 }
 #endif
