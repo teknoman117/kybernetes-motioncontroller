@@ -778,7 +778,7 @@ THD_FUNCTION(MainThread, arg) {
     .i2cp = &I2CD1,
     .i2ccfg = &i2c1Config,
     .slaveaddress = INA219_SAD_A1_A0_GND_GND,
-    .configuration = INA219_CONFIG_GAIN_2_80MV
+    .configuration = INA219_PGA_GAIN_2_80MV
       | (INA219_ADC_TIME_17_02MS << INA219_CONFIG_BADCRES_SHIFT)
       | (INA219_ADC_TIME_17_02MS << INA219_CONFIG_SADCRES_SHIFT)
       | INA219_MODE_SHUNT_BUS_CONT,

@@ -296,10 +296,10 @@ msg_t ina219ReadBusVoltage(INA219Driver *devp, uint16_t* voltage, bool* ready, b
   msg = ina219_read_register(devp, INA219_AD_BUS_VOLTAGE, (uint16_t*) &raw);
   if (msg == MSG_OK) {
     if (overflow) {
-      *overflow = !!(raw & 0x1);
+      *overflow = !!(raw & INA219_BUS_VOLTAGE_OVF);
     }
     if (ready) {
-      *ready = !!(raw & 0x02);
+      *ready = !!(raw & INA219_BUS_VOLTAGE_CNVR);
     }
 
     // volate is in mV

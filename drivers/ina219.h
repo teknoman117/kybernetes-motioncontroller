@@ -59,10 +59,6 @@
 #define INA219_CONFIG_BVOLTAGERANGE 0x2000U /**< Bus voltage range        */
 
 #define INA219_CONFIG_GAIN_MASK     0x1800U /**< PGA gain mask            */
-#define INA219_CONFIG_GAIN_1_40MV   0x0000U /**< PGA gain /1 (40mV)       */
-#define INA219_CONFIG_GAIN_2_80MV   0x0800U /**< PGA gain /2 (80mV)       */
-#define INA219_CONFIG_GAIN_4_160MV  0x1000U /**< PGA gain /4 (160mV)      */
-#define INA219_CONFIG_GAIN_8_320MV  0x1800U /**< PGA gain /8 (320mV)      */
 
 #define INA219_CONFIG_BADCRES_MASK  0x0780U /**< Bus ADC resolution mask  */
 #define INA219_CONFIG_BADCRES_SHIFT 7
@@ -138,10 +134,10 @@ typedef uint8_t ina219_reg_t;
  * @brief   INA219 PGA gain.
  */
 typedef enum {
-  INA219_PGA_GAIN_1_40MV = 0,     /**< Gain /1, max shunt voltage 40mV  */
-  INA219_PGA_GAIN_2_80MV = 1,     /**< Gain /2, max shunt voltage 80mV  */
-  INA219_PGA_GAIN_4_160MV = 2,    /**< Gain /4, max shunt voltage 160mV */
-  INA219_PGA_GAIN_8_320MV = 3     /**< Gain /8, max shunt voltage 320mV */
+  INA219_PGA_GAIN_1_40MV = 0x0000,     /**< Gain /1, max shunt voltage 40mV  */
+  INA219_PGA_GAIN_2_80MV = 0x0800,     /**< Gain /2, max shunt voltage 80mV  */
+  INA219_PGA_GAIN_4_160MV = 0x1000,    /**< Gain /4, max shunt voltage 160mV */
+  INA219_PGA_GAIN_8_320MV = 0x1800     /**< Gain /8, max shunt voltage 320mV */
 } ina219_pga_gain_t;
 
 /**
