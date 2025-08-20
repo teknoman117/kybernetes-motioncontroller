@@ -56,7 +56,7 @@ void IMU::computeIMU()
     //Acq_time += micros() - Begin;
 
     // MAXUSFS Quaternion is ENU
-    buff_heading[_sensornum] = atan2f(2.0f*(qt[_sensornum][1]*qt[_sensornum][2] - qt[_sensornum][0]*qt[_sensornum][3]), qt[_sensornum][0]*qt[_sensornum][0] -
+    /*buff_heading[_sensornum] = atan2f(2.0f*(qt[_sensornum][1]*qt[_sensornum][2] - qt[_sensornum][0]*qt[_sensornum][3]), qt[_sensornum][0]*qt[_sensornum][0] -
                                       qt[_sensornum][1]*qt[_sensornum][1] + qt[_sensornum][2]*qt[_sensornum][2] - qt[_sensornum][3]*qt[_sensornum][3]);
     buff_pitch[_sensornum]   = asinf(2.0f*(qt[_sensornum][2]*qt[_sensornum][3] + qt[_sensornum][0]*qt[_sensornum][1]));
     buff_roll[_sensornum]    = atan2f(2.0f*(qt[_sensornum][0]*qt[_sensornum][2] - qt[_sensornum][1]*qt[_sensornum][3]), qt[_sensornum][0]*qt[_sensornum][0] -
@@ -68,7 +68,7 @@ void IMU::computeIMU()
     angle[_sensornum][0]     = buff_pitch[_sensornum];
     yaw[_sensornum]          = buff_heading[_sensornum];
     heading[_sensornum]      = yaw[_sensornum];                                                                                                                  // Mag declination added in USFSMAX
-    if(heading[_sensornum] < 0.0f) heading[_sensornum] += 360.0f;                                                                                                // Convert heading to 0 - 360deg range
+    if(heading[_sensornum] < 0.0f) heading[_sensornum] += 360.0f;*/                                                                                                // Convert heading to 0 - 360deg range
   } else
   {
     _usfsmax->getEULER();

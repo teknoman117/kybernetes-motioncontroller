@@ -717,7 +717,7 @@ THD_FUNCTION(IMUThread, arg) {
     auto events = chEvtWaitOne(IMU_DATA_EVENT | IMU_CALIBRATE_EVENT);
     if (events & IMU_CALIBRATE_EVENT) {
       // reset the hard iron corrector
-      USFSMAX_0.Reset_DHI();
+      //USFSMAX_0.Reset_DHI();
       dhi = false;
     } else if (events & IMU_DATA_EVENT) {
       // get the status
@@ -743,7 +743,7 @@ THD_FUNCTION(IMUThread, arg) {
       }
 
       // read the IMU
-      switch(pending & 0x0F) {
+      /*switch(pending & 0x0F) {
         case 0x01:
           USFSMAX_0.GyroAccel_getADC();
           break;
@@ -773,17 +773,17 @@ THD_FUNCTION(IMUThread, arg) {
           break;
         default:
           break;
-      };
+      };*/
 
       // send orientation if we received it
       if (pending & 0x10) {
         imu_0.computeIMU();
         OrientationPacket packet = {
           .orientation = {
-            heading[0],
-            angle[0][0],
-            angle[0][1],
-            0
+            qt[0][0],
+            qt[0][1],
+            qt[0][2],
+            qt[0][3]
           }
         };
         sendPacket(&SD1, packet);
