@@ -187,7 +187,7 @@ class USFSMAX
 {
   public:
                                       USFSMAX(I2CDriver*, uint8_t);
-     void                             init_USFSMAX();
+     bool                             init_USFSMAX();
      void                             GoToSleep();
      void                             GyroAccelMagBaro_getADC();
      void                             GyroAccel_getADC();

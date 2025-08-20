@@ -96,12 +96,12 @@ struct StatusPacket {
   uint8_t imuStatus;
 } __attribute__((packed));
 
-/*struct OrientationPacket {
+struct OrientationPacket {
   static constexpr auto ReceiveType = PacketType::Orientation;
-  static constexpr size_t ReceiveTransportSize = sizeof(quat_t);
+  static constexpr size_t ReceiveTransportSize = sizeof(float) * 4;
 
-  quat_t orientation;
-} __attribute__((packed));*/
+  float orientation[4];
+} __attribute__((packed));
 
 struct SteeringSetPacket {
   static constexpr auto ReceiveType = PacketType::SteeringSet;

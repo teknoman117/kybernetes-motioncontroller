@@ -230,10 +230,10 @@
 
 /********************                  Magnetic Constants                  ***********************/
 
-      #define KELSEYVILLE_CA_USA
+      //#define KELSEYVILLE_CA_USA
       //#define DANVILLE_CA_USA
       //#define YUBA_CITY_CA_USA
-      //#define SUNNYVALE_CA_USA
+      #define SUNNYVALE_CA_USA
       //#define MISSISSAUGA_ON_CA
 
 /**************************            End Configuration              ****************************/

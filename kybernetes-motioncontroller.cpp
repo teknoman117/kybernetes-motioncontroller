@@ -12,6 +12,7 @@
 
 #include "hal.h"
 #include "ch.h"
+#include "chevt.h"
 
 #include "crc8.hpp"
 #include "killswitch-types.hpp"
@@ -20,7 +21,11 @@
 #include "lock.hpp"
 
 #include "ina219.h"
+
 #include "USFSMAX.h"
+#include "IMU.h"
+#include "Sensor_cal.h"
+#include "Globals.h"
 
 constexpr int killSwitchAddress = 0x08;
 
@@ -28,11 +33,13 @@ constexpr int killSwitchAddress = 0x08;
 #define ENCODER_CHANNEL_B_LINE PAL_LINE(IOPORT4, 3)
 #define BUMPER_A_LINE          PAL_LINE(IOPORT4, 4)
 #define BUMPER_B_LINE          PAL_LINE(IOPORT4, 5)
-#define IMU_DATA_READ_LINE     PAL_LINE(IOPORT4, 6)
+#define IMU_DATA_READY_LINE    PAL_LINE(IOPORT4, 6)
 #define BATTERY_LOW_LINE       PAL_LINE(IOPORT4, 7)
 
 #define SERVO_STEERING_LINE    PAL_LINE(IOPORT2, 1)
 #define SERVO_THROTTLE_LINE    PAL_LINE(IOPORT2, 2)
+
+#define IMU_DATA_EVENT         EVENT_MASK(0)
 
 constexpr float defaultKp = 0.1f;
 constexpr float defaultKi = 0.25f;
@@ -139,8 +146,6 @@ namespace {
 
 INA219Driver logicPowerSensor;
 
-//USFSMAX imu(0x57);
-
 PID<20> pid(defaultKp, defaultKi, defaultKd);
 
 ConfigurationPacket configuration = {
@@ -159,7 +164,8 @@ StatusPacket status = {
   .batteryLow = 0,
   .bumperPressed = 0,
   .odometer = 0,
-  .motion = PIDFrame()
+  .motion = PIDFrame(),
+  .imuStatus = 0,
 };
 
 MotionControllerState localState = MotionControllerState::Disabled;
@@ -167,26 +173,15 @@ MotionControllerState localState = MotionControllerState::Disabled;
 KillSwitchState remoteState = KillSwitchState::Disarmed;
 
 volatile bool bumperContacted = false;
-volatile bool imuDataPending = false;
 volatile int32_t encoderTicks = 0;
 volatile uint8_t encoderState = 0;
 
 SEMAPHORE_DECL(stateSemaphore, 1);
+EVENTSOURCE_DECL(imuDataEvent);
 
-static void bumperContact() {
-  bumperContacted = true;
-}
-
-static void imuDataReady() {
-  imuDataPending = true;
-}
-
-static void encoderEvent() {
-  chSysLockFromISR();
-
+static void encoderEvent(uint8_t portState) {
   // get the encoder transition map
-  const auto bits = (palReadPort(PAL_PORT(ENCODER_CHANNEL_A_LINE))
-      >> PAL_PAD(ENCODER_CHANNEL_A_LINE)) & 0x3;
+  const auto bits = (portState >> PAL_PAD(ENCODER_CHANNEL_A_LINE)) & 0x3;
   const auto transitions = (encoderState << 2) | bits;
   encoderState = bits;
 
@@ -221,26 +216,35 @@ static void encoderEvent() {
       encoderTicks++;
       break;
   }
-
-  chSysUnlockFromISR();
 }
 
-OSAL_IRQ_HANDLER(INT0_vect) {
-  OSAL_IRQ_PROLOGUE();
-  encoderEvent();
-  OSAL_IRQ_EPILOGUE();
-}
-
-OSAL_IRQ_HANDLER(INT1_vect) {
-  OSAL_IRQ_PROLOGUE();
-  encoderEvent();
-  OSAL_IRQ_EPILOGUE();
-}
-
-// TODO: detect imu interrupt as well
 OSAL_IRQ_HANDLER(PCINT2_vect) {
   OSAL_IRQ_PROLOGUE();
-  bumperContact();
+
+  // compute edges
+  static uint8_t previousState = 0;
+  uint8_t state = PIND;
+  uint8_t changed = previousState ^ state;
+  previousState = state;
+
+  chSysLockFromISR();
+
+  // encoder event
+  if (changed & (_BV(PAL_PAD(ENCODER_CHANNEL_A_LINE)) | _BV(PAL_PAD(ENCODER_CHANNEL_B_LINE)))) {
+    encoderEvent(state);
+  }
+
+  // bumper event
+  if ((state & changed) & (_BV(PAL_PAD(BUMPER_A_LINE)) | _BV(PAL_PAD(BUMPER_B_LINE)))) {
+    bumperContacted = true;
+  }
+
+  // imu event
+  if ((state & changed) & _BV(PAL_PAD(IMU_DATA_READY_LINE))) {
+    chEvtBroadcastFlagsI(&imuDataEvent, IMU_DATA_EVENT);
+  }
+
+  chSysUnlockFromISR();
   OSAL_IRQ_EPILOGUE();
 }
 
@@ -376,7 +380,6 @@ void controllerUpdate() {
   status.remote = packet;
   status.batteryLow = palReadLine(BATTERY_LOW_LINE) ? 0 : 1;
   status.bumperPressed = bumperPressed;
-  status.imuStatus = /* imu.getStatus() */ 0;
   sendPacket(&SD1, status);
 }
 
@@ -671,22 +674,89 @@ void handlePacketSync() {
   sendPacket(&SD1, response);
 }
 
-/*void imuUpdate(unsigned long now) {
-  // TODO: millis() can wrap (once every 49 days)
-  if (imuNextUpdate > now) {
-    return;
+THD_WORKING_AREA(waIMUThread, 256);
+THD_FUNCTION(IMUThread, arg) {
+  USFSMAX USFSMAX_0(&I2CD1, 0);
+  IMU imu_0(&USFSMAX_0, 0);
+  Sensor_cal sensor_cal(&I2CD1, &USFSMAX_0, 0);
+
+  // Configure IMU
+  if (!USFSMAX_0.init_USFSMAX()) {
+    chThdExit(MSG_RESET);
   }
 
-  // Next update in 10 ms (from start)
-  imuNextUpdate += 10UL;
-
-  if (imu.isConnected()) {
-    imu.getQUAT();
-    OrientationPacket packet;
-    packet.orientation = imu.getOrientation().quat;
-    sendPacket(&SD1, packet);
+  // calibrate gyroscope
+  sensor_cal.GyroCal();
+  uint8_t calibrationStatus = 1;
+  while (calibrationStatus & 1) {
+    i2cAcquireBus(&I2CD1);
+    i2cMasterTransmit(&I2CD1, MAX32660_SLV_ADDR, ((uint8_t[]) {CALIBRATION_STATUS}), 1, &calibrationStatus, 1);
+    i2cReleaseBus(&I2CD1);
+    chThdSleepMilliseconds(10);
   }
-}*/
+
+  // response to imu data ready events
+  event_listener_t listener;
+  chEvtRegisterMask(&imuDataEvent, &listener, IMU_DATA_EVENT);
+  status.imuStatus = 1;
+  while (1) {
+    auto events = chEvtWaitOne(IMU_DATA_EVENT);
+    if (events & IMU_DATA_EVENT) {
+      // get the status
+      i2cAcquireBus(&I2CD1);
+      uint8_t status = 0;
+      i2cMasterTransmit(&I2CD1, MAX32660_SLV_ADDR, ((uint8_t[]) {COMBO_DRDY_STAT}), 1, &status, 1);
+      i2cReleaseBus(&I2CD1);
+
+      // read the IMU
+      switch(status & 0x0F) {
+        case 0x01:
+          USFSMAX_0.GyroAccel_getADC();
+          break;
+        case 0x02:
+          USFSMAX_0.GyroAccel_getADC();
+          break;
+        case 0x03:
+          USFSMAX_0.GyroAccel_getADC();
+          break;
+        case 0x07:
+          USFSMAX_0.GyroAccelMagBaro_getADC();
+          break;
+        case 0x0B:
+          USFSMAX_0.GyroAccelMagBaro_getADC();
+          break;
+        case 0x0F:
+          USFSMAX_0.GyroAccelMagBaro_getADC();
+          break;
+        case 0x0C:
+          USFSMAX_0.MagBaro_getADC();
+          break;
+        case 0x04:
+          USFSMAX_0.MAG_getADC();
+          break;
+        case 0x08:
+          USFSMAX_0.BARO_getADC();
+          break;
+        default:
+          break;
+      };
+
+      // send orientation if we received it
+      if (status & 0x10) {
+        imu_0.computeIMU();
+        OrientationPacket packet = {
+          .orientation = {
+            heading[0],
+            angle[0][0],
+            angle[0][1],
+            0
+          }
+        };
+        sendPacket(&SD1, packet);
+      }
+    }
+  }
+}
 
 THD_WORKING_AREA(waPacketThread, 256);
 THD_FUNCTION(PacketThread, arg) {
@@ -762,7 +832,7 @@ THD_FUNCTION(MainThread, arg) {
   palSetLineMode(ENCODER_CHANNEL_B_LINE, PAL_MODE_INPUT);
   palSetLineMode(BUMPER_A_LINE, PAL_MODE_INPUT_PULLUP);
   palSetLineMode(BUMPER_B_LINE, PAL_MODE_INPUT_PULLUP);
-  palSetLineMode(IMU_DATA_READ_LINE, PAL_MODE_INPUT);
+  palSetLineMode(IMU_DATA_READY_LINE, PAL_MODE_INPUT);
   palSetLineMode(BATTERY_LOW_LINE, PAL_MODE_INPUT_PULLUP);
   palSetLineMode(SERVO_STEERING_LINE, PAL_MODE_OUTPUT_PUSHPULL);
   palSetLineMode(SERVO_THROTTLE_LINE, PAL_MODE_OUTPUT_PUSHPULL);
@@ -803,44 +873,26 @@ THD_FUNCTION(MainThread, arg) {
   setSteering(0);
   setThrottle(0);
 
-  // set up encoder interrupts (get BITS 2 and 3 into state BITS 0 and 1)
-  EICRA = _BV(ISC10) | _BV(ISC00);
-  EIMSK = _BV(INT1) | _BV(INT0);
+  // initialize initial encoder state
   encoderState = (palReadPort(PAL_PORT(ENCODER_CHANNEL_A_LINE))
       >> PAL_PAD(ENCODER_CHANNEL_A_LINE)) & 0x3;
 
-  // set up bumper interrupts
-  PCMSK2 = _BV(PAL_PAD(BUMPER_A_LINE)) | _BV(PAL_PAD(BUMPER_B_LINE));
+  // set up bumper, encoder, and imu interrupts
+  // TODO: implement padevent support for ATmega
+  PCMSK2 = _BV(PAL_PAD(BUMPER_A_LINE)) | _BV(PAL_PAD(BUMPER_B_LINE))
+      | _BV(PAL_PAD(ENCODER_CHANNEL_A_LINE)) | _BV(PAL_PAD(ENCODER_CHANNEL_B_LINE))
+      | _BV(PAL_PAD(IMU_DATA_READY_LINE));
   PCICR = _BV(PCIE2);
-
-  //attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(imuDataReadyPin), imuDataReady, RISING);
-
-  // Configure IMU
-  //imu.start();
 
   // call out to what was the arduino loop function
   while (1) {
-    //imuUpdate(now);
     controllerUpdate();
-
-    // Process IMU
-    /*if (imu.isConnected()) {
-      if (imuDataPending) {
-        imuDataPending = false;
-        if (imu.poll()) {
-          // send orientation packet
-          OrientationPacket packet;
-          packet.orientation = imu.getOrientation();
-          sendPacket(packet);
-        }
-      }
-    }*/
-
     chThdSleepMilliseconds(20);
   }
 }
 
 THD_TABLE_BEGIN
+  THD_TABLE_THREAD(2, "imu", waIMUThread, IMUThread, NULL)
   THD_TABLE_THREAD(1, "packet", waPacketThread, PacketThread,  NULL)
   THD_TABLE_THREAD(0, "main", waMainThread, MainThread,  NULL)
 THD_TABLE_END

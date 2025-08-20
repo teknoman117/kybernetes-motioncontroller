@@ -36,7 +36,7 @@ USFSMAX::USFSMAX(I2CDriver* i2c, uint8_t sensornum)
   _sensornum = sensornum;
 }
 
-void USFSMAX::init_USFSMAX()
+bool USFSMAX::init_USFSMAX()
 {
   uint8_t STAT;
   uint8_t ConfigByte;
@@ -61,8 +61,8 @@ void USFSMAX::init_USFSMAX()
     Serial.println("");
     Serial.print("Fusion status: "); Serial.println(STAT);
   #endif
-  if(STAT == 0)
-  {
+  //if(STAT == 0)
+  //{
     i2cMasterTransmit(_i2c, MAX32660_SLV_ADDR, ((uint8_t[]){FUSION_START_STOP, 0x00}), 2, nullptr, 0);                             // Stop sensor fusion
     chThdSleepMilliseconds(100);
 
@@ -86,7 +86,7 @@ void USFSMAX::init_USFSMAX()
       Serial.println("USFSMAX sensor fusion running!");
       Serial.println("");
     #endif
-  }
+  //}
 
   // Check for sensor errors
   i2cMasterTransmit(_i2c, MAX32660_SLV_ADDR, ((uint8_t[]){SENS_ERR_STAT}), 1, &STAT, 1);
@@ -101,7 +101,8 @@ void USFSMAX::init_USFSMAX()
       Serial.print("Sensor error!");
       Serial.println("");
     #endif
-    while(1) {;}
+    i2cReleaseBus(_i2c);
+    return false;
   }
   if(ENABLE_DHI_CORRECTOR)
   {
@@ -120,7 +121,7 @@ void USFSMAX::init_USFSMAX()
     Serial.println("");
   #endif
 
-  USFSMAX::Retreive_full_gyrocal();
+  /*USFSMAX::Retreive_full_gyrocal();
   chThdSleepMilliseconds(100);
   //Alarms::blink_blueLED(2,10,1);
   USFSMAX::Retreive_full_accelcal();
@@ -198,8 +199,9 @@ void USFSMAX::init_USFSMAX()
     Serial.print(final_magcal[_sensornum].invW[2][1], 4); Serial.print(",");
     Serial.println(final_magcal[_sensornum].invW[2][2], 4);
     Serial.println(""); Serial.println("");
-  #endif
+  #endif*/
   i2cReleaseBus(_i2c);
+  return true;
 }
 
 void USFSMAX::GoToSleep()
@@ -483,12 +485,12 @@ void USFSMAX::Retreive_cfg()
 
 void USFSMAX::Retreive_full_accelcal()
 {
-  i2cAcquireBus(_i2c);
+  //i2cAcquireBus(_i2c);
   i2cMasterTransmit(_i2c, MAX32660_SLV_ADDR, ((uint8_t[]){ACCEL_CAL_DATA0}), 1, &AccelCal_buff[0], 30);
   chThdSleepMilliseconds(100);
   i2cMasterTransmit(_i2c, MAX32660_SLV_ADDR, ((uint8_t[]){ACCEL_CAL_DATA1}), 1, &AccelCal_buff[30], (sizeof(full_adv_cal_t) - 30));
   memcpy(&accelcal[_sensornum], AccelCal_buff, sizeof(full_adv_cal_t));
-  i2cReleaseBus(_i2c);
+  //i2cReleaseBus(_i2c);
 }
 
 void USFSMAX::Upload_full_accelcal(full_adv_cal_t Cal)
@@ -498,12 +500,12 @@ void USFSMAX::Upload_full_accelcal(full_adv_cal_t Cal)
 
 void USFSMAX::Retreive_ellip_magcal()
 {
-  i2cAcquireBus(_i2c);
+  //i2cAcquireBus(_i2c);
   i2cMasterTransmit(_i2c, MAX32660_SLV_ADDR, ((uint8_t[]){ELLIP_MAG_CAL_DATA0}), 1, &EllipMagCal_buff[0], 30);
   chThdSleepMilliseconds(100);
   i2cMasterTransmit(_i2c, MAX32660_SLV_ADDR, ((uint8_t[]){ELLIP_MAG_CAL_DATA1}), 1, &EllipMagCal_buff[30], (sizeof(full_adv_cal_t) - 30));
   memcpy(&ellipsoid_magcal[_sensornum], EllipMagCal_buff, sizeof(full_adv_cal_t));
-  i2cReleaseBus(_i2c);
+  //i2cReleaseBus(_i2c);
 }
 
 void USFSMAX::Upload_ellip_magcal(full_adv_cal_t Cal)
@@ -513,12 +515,12 @@ void USFSMAX::Upload_ellip_magcal(full_adv_cal_t Cal)
 
 void USFSMAX::Retreive_final_magcal()
 {
-  i2cAcquireBus(_i2c);
+  //i2cAcquireBus(_i2c);
   i2cMasterTransmit(_i2c, MAX32660_SLV_ADDR, ((uint8_t[]){FINE_MAG_CAL_DATA0}), 1, &FineMagCal_buff[0], 30);
   chThdSleepMilliseconds(100);
   i2cMasterTransmit(_i2c, MAX32660_SLV_ADDR, ((uint8_t[]){FINE_MAG_CAL_DATA1}), 1, &FineMagCal_buff[30], (sizeof(full_adv_cal_t) - 30));
   memcpy(&final_magcal[_sensornum], FineMagCal_buff, sizeof(full_adv_cal_t));
-  i2cReleaseBus(_i2c);
+  //i2cReleaseBus(_i2c);
 }
 
 void USFSMAX::Upload_final_magcal(full_adv_cal_t Cal)
@@ -528,12 +530,12 @@ void USFSMAX::Upload_final_magcal(full_adv_cal_t Cal)
 
 void USFSMAX::Retreive_full_gyrocal()
 {
-  i2cAcquireBus(_i2c);
+  //i2cAcquireBus(_i2c);
   i2cMasterTransmit(_i2c, MAX32660_SLV_ADDR, ((uint8_t[]){GYRO_CAL_DATA0}), 1, &GyroCal_buff[0], 30);
   chThdSleepMilliseconds(100);
   i2cMasterTransmit(_i2c, MAX32660_SLV_ADDR, ((uint8_t[]){GYRO_CAL_DATA1}), 1, &GyroCal_buff[30], (sizeof(full_adv_cal_t) - 30));
   memcpy(&gyrocal[_sensornum], GyroCal_buff, sizeof(full_adv_cal_t));
-  i2cReleaseBus(_i2c);
+  //i2cReleaseBus(_i2c);
 }
 
 void USFSMAX::Upload_full_gyrocal(full_adv_cal_t Cal)

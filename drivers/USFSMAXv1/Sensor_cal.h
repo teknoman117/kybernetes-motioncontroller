@@ -29,7 +29,10 @@
 #ifndef Sensor_cal_h
 #define Sensor_cal_h
 
-#include "Alarms.h"
+#include "osal.h"
+#include "halconf.h"
+#include "hal_i2c.h"
+
 #include "Types.h"
 #include "def.h"
 #include "config.h"
@@ -50,13 +53,13 @@ extern volatile uint8_t                 data_ready[2];
 class Sensor_cal
 {
   public:
-                                        Sensor_cal(I2Cdev*, USFSMAX*, uint8_t);
+                                        Sensor_cal(I2CDriver*, USFSMAX*, uint8_t);
      void                               GyroCal();
      void                               apply_adv_calibration(full_adv_cal_t calibration, int16_t *raw, float sf, float *out);
      void                               apply_adv_calibration(full_adv_cal_t calibration, float *raw, float sf, float *out);
      void                               sendOneToProceed();
   private:
-     I2Cdev*                            _i2c;
+     I2CDriver*                         _i2c;
      USFSMAX*                           _usfsmax;
      uint8_t                            _sensornum;
 };

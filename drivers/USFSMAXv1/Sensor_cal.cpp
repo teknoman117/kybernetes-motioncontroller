@@ -26,10 +26,9 @@
  * WITH THE SOFTWARE.
  */
 
-#include "Arduino.h"
 #include "Sensor_cal.h"
 
-Sensor_cal::Sensor_cal(I2Cdev* i2c, USFSMAX* usfsmax, uint8_t sensornum)
+Sensor_cal::Sensor_cal(I2CDriver* i2c, USFSMAX* usfsmax, uint8_t sensornum)
 {
   _i2c       = i2c;
   _usfsmax   = usfsmax;
@@ -38,15 +37,17 @@ Sensor_cal::Sensor_cal(I2Cdev* i2c, USFSMAX* usfsmax, uint8_t sensornum)
 
 void Sensor_cal::GyroCal()
 {
-  Alarms::blueLEDoff();
-  _i2c->writeByte(MAX32660_SLV_ADDR, CALIBRATION_REQUEST, 0x01);                                                                               // 0x01 - assert bit 0, start gyro cal
+  //Alarms::blueLEDoff();
+  i2cAcquireBus(_i2c);
+  i2cMasterTransmit(_i2c, MAX32660_SLV_ADDR, ((uint8_t[]) {CALIBRATION_REQUEST, 0x01}), 2, nullptr, 0);
+  i2cReleaseBus(_i2c);
   gyroCalActive[_sensornum] = 1;
 }
 
-void Sensor_cal::sendOneToProceed()
+/*void Sensor_cal::sendOneToProceed()
 {
   uint8_t input = 0;
-  
+
   Serial.println("Send '1' to continue...");
   while(1)
   {
@@ -54,7 +55,7 @@ void Sensor_cal::sendOneToProceed()
     if(input == 49) break;
     delay(10);
   }
-}
+}*/
 
 void Sensor_cal::apply_adv_calibration(full_adv_cal_t calibration, int16_t *raw, float sf, float *out)
 {

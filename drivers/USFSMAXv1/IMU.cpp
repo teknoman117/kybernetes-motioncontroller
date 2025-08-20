@@ -26,8 +26,9 @@
  * WITH THE SOFTWARE.
  */
 
-#include "Arduino.h"
 #include "IMU.h"
+
+#include <math.h>
 
 IMU::IMU(USFSMAX* usfsmax, uint8_t sensornum)
 {
@@ -39,20 +40,20 @@ IMU::IMU(USFSMAX* usfsmax, uint8_t sensornum)
 * @fn: computeIMU()
 *
 * @brief: Calculates state estimate using USFSMAX-generated data
-* 
-* @params: 
-* @returns: 
+*
+* @params:
+* @returns:
 */
 void IMU::computeIMU()
 {
   float yaw[2];
   static float buff_roll[2] = {0.0f, 0.0f}, buff_pitch[2] = {0.0f, 0.0f}, buff_heading[2] = {0.0f, 0.0f};
 
-  Begin = micros();
+  //Begin = micros();
   if(!EulerQuatFlag)
   {
     _usfsmax->getQUAT_Lin();
-    Acq_time += micros() - Begin;
+    //Acq_time += micros() - Begin;
 
     // MAXUSFS Quaternion is ENU
     buff_heading[_sensornum] = atan2f(2.0f*(qt[_sensornum][1]*qt[_sensornum][2] - qt[_sensornum][0]*qt[_sensornum][3]), qt[_sensornum][0]*qt[_sensornum][0] -
@@ -71,21 +72,21 @@ void IMU::computeIMU()
   } else
   {
     _usfsmax->getEULER();
-    Acq_time += micros() - Begin;
+    //Acq_time += micros() - Begin;
   }
-  TimeStamp               = ((float)micros() - (float)Start_time)/1000000.0f;
+  //TimeStamp               = ((float)micros() - (float)Start_time)/1000000.0f;
 }
 
 /**
 * @fn: compute_Alternate_IMU()
 *
 * @brief: Calculates orientation estimate using open-source 9DOF quaternion filters
-* 
-* @params: 
-* @returns: 
+*
+* @params:
+* @returns:
 */
 
-void IMU::compute_Alternate_IMU()
+/*void IMU::compute_Alternate_IMU()
 {
   static float    ax[2], ay[2], az[2], gx[2], gy[2], gz[2], mx[2], my[2], mz[2];
   static float    deltat[2];
@@ -93,7 +94,7 @@ void IMU::compute_Alternate_IMU()
   static float    rps_per_dps  = RPS_PER_DPS;
   static uint32_t tprev[2]     = {Start_time, Start_time};
   static uint32_t intdeltat[2] = {0, 0};
-  
+
   // Scale quaternion filter inputs to physical units
   ax[_sensornum] = accData[_sensornum][0];                                                                                                                       // In g's
   ay[_sensornum] = accData[_sensornum][1];                                                                                                                       // In g's
@@ -129,7 +130,7 @@ void IMU::compute_Alternate_IMU()
     }
   #endif
   HEADING[_sensornum]  = -atan2f(QT[_sensornum][0]*QT[_sensornum][0] - QT[_sensornum][1]*QT[_sensornum][1] + QT[_sensornum][2]*QT[_sensornum][2] -
-                                 QT[_sensornum][3]*QT[_sensornum][3], 2.0f*(QT[_sensornum][1]*QT[_sensornum][2] - QT[_sensornum][0]*QT[_sensornum][3]));   
+                                 QT[_sensornum][3]*QT[_sensornum][3], 2.0f*(QT[_sensornum][1]*QT[_sensornum][2] - QT[_sensornum][0]*QT[_sensornum][3]));
   ANGLE[_sensornum][0] = asinf(2.0f*(QT[_sensornum][2]*QT[_sensornum][3] + QT[_sensornum][0]*QT[_sensornum][1]));
   ANGLE[_sensornum][1] = atan2f(2.0f*(QT[_sensornum][0]*QT[_sensornum][2] - QT[_sensornum][1]*QT[_sensornum][3]), QT[_sensornum][0]*QT[_sensornum][0] -
                                 QT[_sensornum][1]*QT[_sensornum][1] - QT[_sensornum][2]*QT[_sensornum][2] + QT[_sensornum][3]*QT[_sensornum][3]);
@@ -138,7 +139,7 @@ void IMU::compute_Alternate_IMU()
   HEADING[_sensornum]  *= 57.2957795f;
   HEADING[_sensornum]  += MAG_DECLINIATION;
   if(HEADING[_sensornum] < 0.0f) {HEADING[_sensornum] += 360.0f;}                                                                                                // Ensure yaw stays between 0 and 360
-}
+}*/
 
 __attribute__((optimize("O3"))) void IMU::MahonyQuaternionUpdate(float ax, float ay, float az, float gx, float gy, float gz,
                                                                  float mx, float my, float mz, float deltat, float* quat)
@@ -160,7 +161,7 @@ __attribute__((optimize("O3"))) void IMU::MahonyQuaternionUpdate(float ax, float
   float q2q4 = q2*q4;
   float q3q3 = q3*q3;
   float q3q4 = q3*q4;
-  float q4q4 = q4*q4;   
+  float q4q4 = q4*q4;
 
   // Normalize accelerometer measurement
   norm = sqrtf(ax*ax + ay*ay + az*az);
@@ -190,7 +191,7 @@ __attribute__((optimize("O3"))) void IMU::MahonyQuaternionUpdate(float ax, float
   vz = q1q1 - q2q2 - q3q3 + q4q4;
   wx = 2.0f*bx*(0.5f - q3q3 - q4q4) + 2.0f*bz*(q2q4 - q1q3);
   wy = 2.0f*bx*(q2q3 - q1q4) + 2.0f*bz*(q1q2 + q3q4);
-  wz = 2.0f*bx*(q1q3 + q2q4) + 2.0f*bz*(0.5f - q2q2 - q3q3);  
+  wz = 2.0f*bx*(q1q3 + q2q4) + 2.0f*bz*(0.5f - q2q2 - q3q3);
 
   // Error is cross product between estimated direction and measured direction of gravity
   ex = (ay*vz - az*vy) + (my*wz - mz*wy);
@@ -295,7 +296,7 @@ __attribute__((optimize("O3"))) void IMU::MadgwickQuaternionUpdate(float ax, flo
   // Gradient decent algorithm corrective step
   s1 = -_2q3 * (2.0f * q2q4 - _2q1q3 - ax) + _2q2 * (2.0f * q1q2 + _2q3q4 - ay) - _2bz * q3 * (_2bx * (0.5f - q3q3 - q4q4) + _2bz * (q2q4 - q1q3) - mx) +
        (-_2bx * q4 + _2bz * q2) * (_2bx * (q2q3 - q1q4) + _2bz * (q1q2 + q3q4) - my) + _2bx * q3 * (_2bx * (q1q3 + q2q4) + _2bz * (0.5f - q2q2 - q3q3) - mz);
-  s2 = _2q4 * (2.0f * q2q4 - _2q1q3 - ax) + _2q1 * (2.0f * q1q2 + _2q3q4 - ay) - 4.0f * q2 * (1.0f - 2.0f * q2q2 - 2.0f * q3q3 - az) + 
+  s2 = _2q4 * (2.0f * q2q4 - _2q1q3 - ax) + _2q1 * (2.0f * q1q2 + _2q3q4 - ay) - 4.0f * q2 * (1.0f - 2.0f * q2q2 - 2.0f * q3q3 - az) +
        _2bz * q4 * (_2bx * (0.5f - q3q3 - q4q4) + _2bz * (q2q4 - q1q3) - mx) + (_2bx * q3 + _2bz * q1) * (_2bx * (q2q3 - q1q4) + _2bz * (q1q2 + q3q4) - my) +
        (_2bx * q4 - _4bz * q2) * (_2bx * (q1q3 + q2q4) + _2bz * (0.5f - q2q2 - q3q3) - mz);
   s3 = -_2q1 * (2.0f * q2q4 - _2q1q3 - ax) + _2q4 * (2.0f * q1q2 + _2q3q4 - ay) - 4.0f * q3 * (1.0f - 2.0f * q2q2 - 2.0f * q3q3 - az) +

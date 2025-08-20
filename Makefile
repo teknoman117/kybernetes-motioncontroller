@@ -17,7 +17,7 @@
 
 # Compiler options here.
 ifeq ($(USE_OPT),)
-  USE_OPT = -O2
+  USE_OPT = -O2 -flto
 endif
 
 # C specific options here (added to USE_OPT).
@@ -32,7 +32,7 @@ endif
 
 # Linker extra options here.
 ifeq ($(USE_LDOPT),)
-  USE_LDOPT = --defsym=__main_thread_stack_base__=0,--defsym=__main_thread_stack_end__=0
+  USE_LDOPT = --defsym=__main_thread_stack_base__=0,--defsym=__main_thread_stack_end__=0 -flto
 endif
 
 # Enable this if you want to see the full log while compiling.

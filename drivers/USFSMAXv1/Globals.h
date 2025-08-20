@@ -32,7 +32,8 @@
 #include "def.h"
 #include "Types.h"
 #include "IMU.h"
-#include <FS.h>
+
+#include <math.h>
 
 // Intermediate data handling variables
 float                                   sensor_point[3];
