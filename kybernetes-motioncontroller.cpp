@@ -40,6 +40,7 @@ constexpr int killSwitchAddress = 0x08;
 #define SERVO_THROTTLE_LINE    PAL_LINE(IOPORT2, 2)
 
 #define IMU_DATA_EVENT         EVENT_MASK(0)
+#define IMU_CALIBRATE_EVENT    EVENT_MASK(1)
 
 constexpr float defaultKp = 0.1f;
 constexpr float defaultKi = 0.25f;
@@ -593,6 +594,17 @@ void handlePacketCrawl(const uint8_t *buffer) {
   sendPacket(&SD1, nack);
 }
 
+void handlePacketResetDHICorrector(const uint8_t *buffer) {
+  using CommandPacket = ResetDHICorrectorPacket;
+  using ResponsePacket = NoArgumentPacket<CommandPacket>;
+
+  auto& packet = *reinterpret_cast<const CommandPacket*>(buffer);
+  chEvtBroadcastFlags(&imuDataEvent, IMU_CALIBRATE_EVENT);
+
+  ResponsePacket response;
+  sendPacket(&SD1, response);
+}
+
 void handlePacketSendArm(const uint8_t *buffer) {
   using CommandPacket = SendArmPacket;
   using ResponsePacket = NoArgumentPacket<SendArmPacket>;
@@ -679,6 +691,7 @@ THD_FUNCTION(IMUThread, arg) {
   USFSMAX USFSMAX_0(&I2CD1, 0);
   IMU imu_0(&USFSMAX_0, 0);
   Sensor_cal sensor_cal(&I2CD1, &USFSMAX_0, 0);
+  bool dhi = false;
 
   // Configure IMU
   if (!USFSMAX_0.init_USFSMAX()) {
@@ -694,22 +707,43 @@ THD_FUNCTION(IMUThread, arg) {
     i2cReleaseBus(&I2CD1);
     chThdSleepMilliseconds(10);
   }
+  status.imuStatus = calibrationStatus;
+  dhi = !!(calibrationStatus & 0x80);
 
-  // response to imu data ready events
+  // response to imu events
   event_listener_t listener;
-  chEvtRegisterMask(&imuDataEvent, &listener, IMU_DATA_EVENT);
-  status.imuStatus = 1;
+  chEvtRegisterMask(&imuDataEvent, &listener, IMU_DATA_EVENT | IMU_CALIBRATE_EVENT);
   while (1) {
-    auto events = chEvtWaitOne(IMU_DATA_EVENT);
-    if (events & IMU_DATA_EVENT) {
+    auto events = chEvtWaitOne(IMU_DATA_EVENT | IMU_CALIBRATE_EVENT);
+    if (events & IMU_CALIBRATE_EVENT) {
+      // reset the hard iron corrector
+      USFSMAX_0.Reset_DHI();
+      dhi = false;
+    } else if (events & IMU_DATA_EVENT) {
       // get the status
+      uint8_t pending = 0;
       i2cAcquireBus(&I2CD1);
-      uint8_t status = 0;
-      i2cMasterTransmit(&I2CD1, MAX32660_SLV_ADDR, ((uint8_t[]) {COMBO_DRDY_STAT}), 1, &status, 1);
+      i2cMasterTransmit(&I2CD1, MAX32660_SLV_ADDR, ((uint8_t[]) {COMBO_DRDY_STAT}), 1, &pending, 1);
       i2cReleaseBus(&I2CD1);
 
+      // if the dhi corrector isn't calibrated, grab the IMU calibration status
+      if (!dhi) {
+        i2cAcquireBus(&I2CD1);
+        i2cMasterTransmit(&I2CD1, MAX32660_SLV_ADDR, ((uint8_t[]) {CALIBRATION_STATUS}), 1, &calibrationStatus, 1);
+        i2cReleaseBus(&I2CD1);
+        status.imuStatus = calibrationStatus;
+
+        if (calibrationStatus & 0x80) {
+          // dhi corrector valid again
+          // get the DHI Rsq values
+          USFSMAX_0.getDHI_Rsq();
+          status.Rsq = Rsq;
+          dhi = true;
+        }
+      }
+
       // read the IMU
-      switch(status & 0x0F) {
+      switch(pending & 0x0F) {
         case 0x01:
           USFSMAX_0.GyroAccel_getADC();
           break;
@@ -742,7 +776,7 @@ THD_FUNCTION(IMUThread, arg) {
       };
 
       // send orientation if we received it
-      if (status & 0x10) {
+      if (pending & 0x10) {
         imu_0.computeIMU();
         OrientationPacket packet = {
           .orientation = {
@@ -797,6 +831,10 @@ THD_FUNCTION(PacketThread, arg) {
         handlePacketCrawl(buffer + 1);
         break;
 
+      case PacketType::ResetDHICorrector:
+        handlePacketResetDHICorrector(buffer + 1);
+        break;
+
       case PacketType::SendArm:
         handlePacketSendArm(buffer + 1);
         break;
@@ -839,7 +877,7 @@ THD_FUNCTION(MainThread, arg) {
 
   // Configure I2C
   static const I2CConfig i2c1Config = {
-    .clock_speed = 400000UL
+    .clock_speed = 200000UL
   };
   i2cStart(&I2CD1, &i2c1Config);
 

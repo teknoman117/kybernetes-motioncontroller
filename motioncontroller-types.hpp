@@ -35,6 +35,7 @@ enum class PacketType : uint8_t {
   ThrottleSetPID = 0x40,
   Crawl = 0x50,
   Orientation = 0x60,
+  ResetDHICorrector = 0x61,
   SendArm = 0xA0,
   SendKeepalive = 0xA1,
   SendDisarm = 0xA2,
@@ -75,7 +76,7 @@ struct ConfigurationPacket {
 // send once per 20 ms (every PID controller update)
 struct StatusPacket {
   static constexpr auto ReceiveType = PacketType::Status;
-  static constexpr size_t ReceiveTransportSize = 19 + sizeof(PIDFrame);
+  static constexpr size_t ReceiveTransportSize = 24 + sizeof(PIDFrame);
 
   // System state
   KillSwitchStatusPacket remote;
@@ -94,6 +95,8 @@ struct StatusPacket {
 
   // imu status
   uint8_t imuStatus;
+  uint8_t _pad1;
+  float Rsq;
 } __attribute__((packed));
 
 struct OrientationPacket {
@@ -101,6 +104,13 @@ struct OrientationPacket {
   static constexpr size_t ReceiveTransportSize = sizeof(float) * 4;
 
   float orientation[4];
+} __attribute__((packed));
+
+struct ResetDHICorrectorPacket {
+  static constexpr auto SendType = PacketType::ResetDHICorrector;
+  static constexpr auto ReceiveType = PacketType::ResetDHICorrector;
+  static constexpr auto SendTransportSize = 0;
+  static constexpr auto ReceiveTransportSize = 0;
 } __attribute__((packed));
 
 struct SteeringSetPacket {
